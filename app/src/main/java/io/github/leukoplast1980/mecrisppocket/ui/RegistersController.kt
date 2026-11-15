@@ -6,6 +6,7 @@
 package io.github.leukoplast1980.mecrisppocket.ui
 
 import android.app.Activity
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -31,8 +32,16 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
     private val dataStackBase = vm.symbols.getValue("datenstackanfang")
     private val returnStackBase = vm.symbols.getValue("returnstackanfang")
 
-    /** Values shown last time, to highlight what changed. */
+    /** Values shown last time. */
     private var previous = HashMap<String, Long>()
+
+    /** When each value last changed (uptime ms), for highlighting while running. */
+    private val changedAt = HashMap<String, Long>()
+
+    /** Values before the last Step: while paused, changes against these stay highlighted. */
+    private var stepBaseline: Map<String, Long>? = null
+
+    private var now = 0L
 
     /** Called after Pause or Step so the console can update its dictionary. */
     var onPausedChanged: ((Boolean) -> Unit)? = null
@@ -41,11 +50,13 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
         pauseButton.setOnClickListener {
             val paused = !vm.isUserPaused
             vm.setUserPaused(paused)
+            stepBaseline = null
             if (paused) Thread { vm.refreshDictionary() }.start()
             updateButtons()
             onPausedChanged?.invoke(paused)
         }
         stepButton.setOnClickListener {
+            stepBaseline = HashMap(previous)
             vm.step()
             text.postDelayed({ refresh() }, 20)
         }
@@ -59,6 +70,7 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
     }
 
     fun refresh() {
+        now = SystemClock.uptimeMillis()
         val s = vm.snapshot()
         val devices = vm.deviceRegs(DEVICE_REGS.map { it.second }.toIntArray())
         val current = HashMap<String, Long>()
@@ -172,10 +184,26 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
     private fun hex(b: SpannableStringBuilder, key: String, v: Long) {
         val start = b.length
         b.append("%08X".format(v))
-        val old = previous[key]
-        if (old != null && old != v) {
+        if (highlighted(key, v)) {
             b.setSpan(ForegroundColorSpan(changedColor), start, b.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+    }
+
+    /**
+     * Paused after a Step: everything the step changed stays highlighted
+     * until the next Step. Running: a value stays highlighted for
+     * HOLD_MS after it last changed, so it is readable.
+     */
+    private fun highlighted(key: String, v: Long): Boolean {
+        val old = previous[key]
+        if (old != null && old != v) changedAt[key] = now
+        val baseline = stepBaseline
+        if (vm.isUserPaused && baseline != null) {
+            val before = baseline[key]
+            return before != null && before != v
+        }
+        val t = changedAt[key] ?: return false
+        return now - t < HOLD_MS
     }
 
     private fun statusBits(v: Int): String = buildList {
@@ -221,6 +249,7 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
     companion object {
         private const val MASK = 0xffffffffL
         private const val MAX_STACK = 16
+        private const val HOLD_MS = 1500L
 
         private val DEVICE_REGS = listOf(
             "UART FLAGS" to 0x40020000,
