@@ -78,8 +78,10 @@ RISC-V binutils must be installed.
 ## Release builds
 
 When the repository has these four Actions secrets, every CI run also builds
-a signed release APK (artifact `mecrisp-pocket-release`), and pushing a tag
-`vX.Y.Z` publishes it as a GitHub release:
+a signed release APK (artifact `mecrisp-pocket-release`). A new tag `vX.Y.Z`
+publishes it: either push the tag (the description comes from
+`docs/releases/vX.Y.Z.md` if it exists), or publish a release with a new tag
+on GitHub's Releases page and CI attaches the APK a few minutes later.
 
 | Secret | Value |
 | --- | --- |

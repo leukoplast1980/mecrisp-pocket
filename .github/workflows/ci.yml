@@ -112,15 +112,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v5
         with:
           name: mecrisp-pocket-release
           path: out
 
-      - name: Create the GitHub release
+      # The release may already exist (made on GitHub's Releases page, which
+      # also creates the tag): then only attach the APK. Otherwise create it,
+      # with docs/releases/<tag>.md as the description when there is one.
+      - name: Publish the APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv out/mecrisp-pocket.apk "out/mecrisp-pocket-${GITHUB_REF_NAME}.apk"
-          gh release create "$GITHUB_REF_NAME" out/*.apk -R "$GITHUB_REPOSITORY" \
-            --title "Mecrisp Pocket $GITHUB_REF_NAME" --generate-notes
+          apk="out/mecrisp-pocket-${GITHUB_REF_NAME}.apk"
+          mv out/mecrisp-pocket.apk "$apk"
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$apk" --clobber -R "$GITHUB_REPOSITORY"
+          elif [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
+            gh release create "$GITHUB_REF_NAME" "$apk" -R "$GITHUB_REPOSITORY" \
+              --title "Mecrisp Pocket $GITHUB_REF_NAME" --notes-file "docs/releases/${GITHUB_REF_NAME}.md"
+          else
+            gh release create "$GITHUB_REF_NAME" "$apk" -R "$GITHUB_REPOSITORY" \
+              --title "Mecrisp Pocket $GITHUB_REF_NAME" --generate-notes
+          fi
