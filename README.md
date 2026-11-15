@@ -4,9 +4,10 @@ A Forth programming environment for Android that runs the real
 [Mecrisp-Quintus](https://mecrisp.sourceforge.net/) Forth on an emulated
 RISC-V microcontroller board.
 
-**Status:** milestone 1 — the emulator, the Quintus port and a minimal console.
-The editor, autocompletion, register and GPIO monitors, phone devices and the
-USB GPIO breakout come in later milestones.
+**Status:** milestone 3 — the emulator, the Quintus port, a REPL and an editor
+with completion and syntax colouring, a Registers view, files and sessions.
+Phone devices, the GPIO view, `include` and the USB GPIO breakout come in
+later milestones.
 
 ## Trying it
 
@@ -21,6 +22,20 @@ In the console:
 - **Reset** restarts the board; words compiled with `compiletoflash` stay
 - a long press on **Reset** restarts without running `init` (safe boot)
 - `eraseflash` removes all flash words
+
+In the editor:
+
+- **Files** opens the scratch file or a file from your project folder (pick
+  the folder once; the app keeps access to it)
+- **Send** sends the current line, the selection or the whole file; sending
+  stops at the first line that does not answer " ok." and marks it red
+- changed files are saved when you leave the app or close their tab; the open
+  files, cursor positions and the console text come back after a restart
+- with a hardware keyboard: Ctrl+S save, Ctrl+Enter send line, Ctrl+Z / Ctrl+Y
+  undo and redo, Ctrl+F find, Ctrl+Space or Tab complete
+
+On a phone the screens are tabs (REPL, Editor, Registers). On a tablet or in
+landscape the editor sits on the left and REPL and Registers share the right.
 
 ## Layout
 
@@ -45,7 +60,9 @@ build/emu/qpemu --flash my-flash.img build/core/core.bin
 ```
 
 `qpemu` gives you the same board in a terminal; `--flash` keeps flash words
-between runs. Run `qpemu` without arguments for its options.
+between runs, and `-f FILE` sends a source file line by line and stops with
+`FILE:N: error` at the first line Forth rejects. Run `qpemu` without arguments
+for its options.
 
 Tests:
 
