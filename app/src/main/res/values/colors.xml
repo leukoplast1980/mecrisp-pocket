@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="console_background">#FF101418</color>
+    <color name="console_text">#FFD8E0D0</color>
+    <color name="console_hint">#FF6A7468</color>
+    <color name="bar_background">#FF1C2328</color>
+    <color name="bar_text">#FFE8EEE4</color>
+    <color name="icon_background">#FF1C2328</color>
+    <color name="icon_foreground">#FF8FD18F</color>
+</resources>

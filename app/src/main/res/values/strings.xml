@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mecrisp Pocket</string>
+    <string name="stop">Stop</string>
+    <string name="reset">Reset</string>
+    <string name="send">Send</string>
+    <string name="input_hint">Forth</string>
+    <string name="safe_boot">Safe boot: init is skipped</string>
+    <string name="input_full">Forth is not reading input</string>
+    <string name="core_update_notice">[A new Quintus core came with this app version. Your saved flash words still run on the old core. Run eraseflash to switch.]\n</string>
+</resources>

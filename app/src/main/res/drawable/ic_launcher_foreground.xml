@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A chip with a Forth prompt on it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M38,36 h32 a2,2 0 0 1 2,2 v32 a2,2 0 0 1 -2,2 h-32 a2,2 0 0 1 -2,-2 v-32 a2,2 0 0 1 2,-2 z"
+        android:strokeWidth="3"
+        android:strokeColor="@color/icon_foreground" />
+    <path
+        android:fillColor="@color/icon_foreground"
+        android:pathData="M29,44h7v3h-7z M29,52.5h7v3h-7z M29,61h7v3h-7z M72,44h7v3h-7z M72,52.5h7v3h-7z M72,61h7v3h-7z M44,29h3v7h-3z M52.5,29h3v7h-3z M61,29h3v7h-3z M44,72h3v7h-3z M52.5,72h3v7h-3z M61,72h3v7h-3z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M45,47 l6,6 l-6,6"
+        android:strokeWidth="3"
+        android:strokeColor="@color/icon_foreground"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="@color/icon_foreground"
+        android:pathData="M54,58h10v3h-10z" />
+</vector>

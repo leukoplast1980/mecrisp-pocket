@@ -1,0 +1,5 @@
+# riscv-tests that do not apply to the Mecrisp Pocket core.
+# One test name per line; lines starting with # are comments.
+#
+# Physical memory protection is not implemented (single trusted program).
+rv32mi-pmpaddr
