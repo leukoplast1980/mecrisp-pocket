@@ -79,17 +79,19 @@ jobs:
             echo "SIGNING_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "Signing with the release key."
           else
-            echo "::notice::No SIGNING_KEYSTORE_BASE64 secret; no release APK. See README."
+            echo "::notice::No SIGNING_KEYSTORE_BASE64 secret; the release APK stays unsigned. See README."
           fi
 
+      # Built on every run, so R8 problems show up early; unsigned without
+      # the secrets, and then not uploaded.
       - name: Release APK
-        if: env.SIGNING_KEYSTORE != ''
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           ./gradlew --no-daemon assembleRelease
+          [ -n "$SIGNING_KEYSTORE" ] || exit 0
           mkdir -p out
           cp app/build/outputs/apk/release/app-release.apk out/mecrisp-pocket.apk
           bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
