@@ -16,7 +16,8 @@
  *   -e TEXT           send TEXT as one line, wait until idle
  *   -s TEXT           send TEXT as one line, don't wait (e.g. an endless loop)
  *   --sleep MS        wait MS milliseconds
- *   -f FILE           send FILE line by line, waiting until idle after each
+ *   -f FILE           send FILE line by line, each line must end with " ok.";
+ *                     stops at the first error (exit status 3)
  *   --break-after MS  wait MS milliseconds, press Stop, wait until idle
  *   --reset           press Reset, wait until idle
  *   --safe-reset      long-press Reset (safe boot), wait until idle
@@ -24,8 +25,8 @@
  *   --where           print pc and the word it is in
  *   -i                interactive: stdin goes to the terminal until EOF
  *
- * With no actions, qpemu runs interactively. Exit status is 0, or 2 if
- * Forth did not become idle within the timeout.
+ * With no actions, qpemu runs interactively. Exit status is 0, 2 if Forth
+ * did not become idle within the timeout, or 3 if a -f file had an error.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "qp/dict.h"
@@ -102,15 +103,26 @@ static int send_line(const char *line)
     return wait_idle();
 }
 
+/* Loads a file line by line, stopping at the first line Forth rejects. */
 static int send_file(const char *path)
 {
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); return 1; }
     char line[1024];
-    int rc = 0;
+    int rc = 0, number = 0;
     while (!rc && fgets(line, sizeof line, f)) {
+        number++;
         line[strcspn(line, "\r\n")] = 0;
-        rc = send_line(line);
+        int r = qp_send_line(vm, line, strlen(line), timeout_ms);
+        if (r == QP_LINE_ERROR) {
+            sleep_ms(20);
+            fprintf(stderr, "\nqpemu: %s:%d: error, stopped\n", path, number);
+            rc = 3;
+        } else if (r == QP_LINE_TIMEOUT) {
+            sleep_ms(20);
+            fprintf(stderr, "\nqpemu: %s:%d: still running after %d ms, stopped\n", path, number, timeout_ms);
+            rc = 2;
+        }
     }
     fclose(f);
     return rc;

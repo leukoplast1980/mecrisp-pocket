@@ -26,6 +26,9 @@ object NativeVm {
     @JvmStatic external fun uartRead(handle: Long, buffer: ByteArray): Int
     @JvmStatic external fun waitingForKey(handle: Long): Boolean
 
+    /** Sends one line and waits for Forth: 0 ok, 1 error, 2 timeout. Blocks. */
+    @JvmStatic external fun sendLine(handle: Long, line: ByteArray, timeoutMs: Int): Int
+
     /** See [Snapshot] for the layout. */
     @JvmStatic external fun snapshot(handle: Long): IntArray
     @JvmStatic external fun deviceRegs(handle: Long, addresses: IntArray): IntArray

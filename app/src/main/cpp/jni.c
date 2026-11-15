@@ -235,3 +235,16 @@ JNIEXPORT jobjectArray JNICALL FN(dictionary)(JNIEnv *env, jclass cls, jlong h, 
     free(w);
     return out;
 }
+
+/* Sends one line and waits for Forth: 0 ok, 1 error, 2 timeout. Blocks:
+ * call off the UI thread. */
+JNIEXPORT jint JNICALL FN(sendLine)(JNIEnv *env, jclass cls, jlong h, jbyteArray line, jint timeout_ms)
+{
+    (void)cls;
+    jsize len = (*env)->GetArrayLength(env, line);
+    jbyte *p = (*env)->GetByteArrayElements(env, line, NULL);
+    if (!p) return QP_LINE_ERROR;
+    int r = qp_send_line(VM(h), (const char *)p, (size_t)len, timeout_ms);
+    (*env)->ReleaseByteArrayElements(env, line, p, JNI_ABORT);
+    return r;
+}

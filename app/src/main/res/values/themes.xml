@@ -22,6 +22,17 @@
         <item name="android:background">?attr/selectableItemBackground</item>
     </style>
 
+    <style name="EditorAction">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">36dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/bar_text</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+    </style>
+
     <style name="Suggestion">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">32dp</item>

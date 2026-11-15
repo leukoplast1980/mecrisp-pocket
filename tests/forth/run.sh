@@ -112,5 +112,15 @@ dict_same "dictionary: compiletoflash mode" -e ": in-ram-3 ;" -e "compiletoflash
 expect "clean up dictionary" "Finished"                      -e "eraseflash"
 expect "where is the CPU"   "where: pc [0-9a-f]+ in spin"    -e ": spin begin again ;" -s "spin" --sleep 100 --where --break-after 10
 
+# Loading a file line by line stops at the first error.
+FILES=$(cd "$(dirname "$0")/files" && pwd)
+expect "load a file"        "^7 sq \. 49  ok\.$"             -f "$FILES/good.fs"
+out=$(timeout 20 "$QPEMU" --flash "$FLASH" --timeout 3000 "$IMAGE" -f "$FILES/bad.fs" </dev/null 2>&1); rc=$?
+if [ $rc -eq 3 ] && printf '%s\n' "$out" | grep -q "bad.fs:5: error" && ! printf '%s\n' "$out" | grep -q ": c 3 ;"; then
+    pass=$((pass + 1)); echo "ok   load stops at the first error"
+else
+    fail=$((fail + 1)); echo "FAIL load stops at the first error (exit $rc)"; printf '%s\n' "$out" | sed 's/^/     | /' | tail -10
+fi
+
 echo "forth tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

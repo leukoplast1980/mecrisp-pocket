@@ -1,6 +1,6 @@
 /*
- * Mecrisp Pocket - main screen: REPL and Registers, as tabs on phones and
- * side by side on wide screens.
+ * Mecrisp Pocket - main screen. Phones: REPL, Editor and Registers as tabs.
+ * Wide screens: the editor on the left, REPL and Registers as tabs on the right.
  * Copyright (C) 2026 The Mecrisp Pocket authors. GPL-3.0-or-later.
  */
 package io.github.leukoplast1980.mecrisppocket
@@ -13,34 +13,65 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.tabs.TabLayout
+import io.github.leukoplast1980.mecrisppocket.files.ProjectFolder
+import io.github.leukoplast1980.mecrisppocket.files.SessionStore
+import io.github.leukoplast1980.mecrisppocket.ui.Completion
 import io.github.leukoplast1980.mecrisppocket.ui.ConsoleController
+import io.github.leukoplast1980.mecrisppocket.ui.EditorController
+import io.github.leukoplast1980.mecrisppocket.ui.ExtraKeys
+import io.github.leukoplast1980.mecrisppocket.ui.InputTarget
 import io.github.leukoplast1980.mecrisppocket.ui.RegistersController
+import io.github.leukoplast1980.mecrisppocket.ui.SuggestionStrip
 import io.github.leukoplast1980.mecrisppocket.vm.VmHost
 
 class MainActivity : AppCompatActivity() {
 
+    private enum class Screen { REPL, EDITOR, REGISTERS }
+
     private lateinit var vm: VmHost
     private lateinit var console: ConsoleController
+    private lateinit var editor: EditorController
     private lateinit var registers: RegistersController
+    private lateinit var strip: SuggestionStrip
+    private lateinit var folder: ProjectFolder
+    private lateinit var sessionStore: SessionStore
 
     private lateinit var tabs: TabLayout
+    private lateinit var editorPane: View
+    private lateinit var rightPane: View
     private lateinit var replPane: View
     private lateinit var registersPane: View
     private lateinit var divider: View
+    private lateinit var extraKeysScroll: View
     private lateinit var title: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private var started = false
-    private var registersTab = false
+    private var screen = Screen.REPL
+    private var tabsWide: Boolean? = null
+    private var rebuildingTabs = false
+
+    /** The input that last had focus, for the strip and extra keys on wide screens. */
+    private var lastInput: InputTarget? = null
+
+    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            folder.setTree(uri)
+            editor.showFiles()
+        }
+    }
 
     private val poll = object : Runnable {
         override fun run() {
@@ -72,13 +103,32 @@ class MainActivity : AppCompatActivity() {
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
 
         vm = VmHost.get(this)
-        console = ConsoleController(this, vm)
+        folder = ProjectFolder(this)
+        sessionStore = SessionStore(this)
+
+        strip = SuggestionStrip(this, findViewById<HorizontalScrollView>(R.id.suggestionScroll), findViewById(R.id.suggestions))
+        console = ConsoleController(
+            this, vm,
+            onInputChanged = { updateStrip() },
+            onDictionaryChanged = { editor.scheduleHighlight(); updateStrip() },
+        )
+        editor = EditorController(
+            this, vm, folder,
+            onInputChanged = { updateStrip() },
+            onSent = { console.markDictionaryStale() },
+            pickFolder = { pickFolder.launch(folder.treeUri) },
+        )
         registers = RegistersController(this, vm)
+        registers.onPausedChanged = { console.markDictionaryStale() }
+        ExtraKeys(findViewById<LinearLayout>(R.id.extraKeys)) { activeInput() }
 
         tabs = findViewById(R.id.tabs)
+        editorPane = findViewById(R.id.editorPane)
+        rightPane = findViewById(R.id.rightPane)
         replPane = findViewById(R.id.replPane)
         registersPane = findViewById(R.id.registersPane)
         divider = findViewById(R.id.paneDivider)
+        extraKeysScroll = findViewById(R.id.extraKeysScroll)
         title = findViewById(R.id.title)
 
         val root = findViewById<View>(R.id.root)
@@ -88,10 +138,7 @@ class MainActivity : AppCompatActivity() {
             WindowInsetsCompat.CONSUMED
         }
 
-        findViewById<Button>(R.id.stop).setOnClickListener {
-            vm.stop()
-            console.markDictionaryStale()
-        }
+        findViewById<Button>(R.id.stop).setOnClickListener { stop() }
         findViewById<Button>(R.id.reset).apply {
             setOnClickListener {
                 vm.reset(safeBoot = false)
@@ -106,49 +153,119 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<ImageButton>(R.id.menu).setOnClickListener { showMenu(it) }
 
-        tabs.addTab(tabs.newTab().setText(R.string.tab_repl))
-        tabs.addTab(tabs.newTab().setText(R.string.tab_registers))
         tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
-                registersTab = tab.position == 1
+                if (rebuildingTabs) return
+                screen = tab.tag as Screen
                 applyLayout()
             }
             override fun onTabUnselected(tab: TabLayout.Tab) {}
             override fun onTabReselected(tab: TabLayout.Tab) {}
         })
 
-        registers.onPausedChanged = { console.markDictionaryStale() }
-
-        if (savedInstanceState != null) {
-            savedInstanceState.getCharSequence(KEY_OUTPUT)?.let { console.appendText(it.toString()) }
-            if (savedInstanceState.getBoolean(KEY_RAW)) console.setRawMode(true)
-            if (savedInstanceState.getBoolean(KEY_REGISTERS_TAB)) tabs.getTabAt(1)?.select()
+        // Track which input was used last (both are visible on wide screens).
+        val trackFocus = View.OnFocusChangeListener { v, hasFocus ->
+            if (hasFocus) {
+                lastInput = if (v === editor.editor) editor else console
+                updateStrip()
+            }
         }
+        editor.editor.onFocusChangeListener = trackFocus
+        console.input.onFocusChangeListener = trackFocus
+        console.rawInput.onFocusChangeListener = trackFocus
+
+        // Restore the last session.
+        val session = sessionStore.load()
+        if (savedInstanceState == null) {
+            val text = sessionStore.loadConsole()
+            if (text.isNotEmpty()) console.appendText(text)
+        } else {
+            savedInstanceState.getCharSequence(KEY_OUTPUT)?.let { console.appendText(it.toString()) }
+        }
+        if (session.rawMode) console.setRawMode(true)
+        screen = runCatching { Screen.valueOf(session.screen) }.getOrDefault(Screen.REPL)
+        editor.restore(session.files, session.activeFile)
         if (vm.coreUpdateAvailable) console.appendText(getString(R.string.core_update_notice))
+        console.scrollToEnd()
 
         applyLayout()
     }
 
     private fun isWide(): Boolean = resources.configuration.screenWidthDp >= WIDE_DP
 
-    private fun registersVisible(): Boolean = isWide() || registersTab
+    private fun registersVisible(): Boolean = screen == Screen.REGISTERS
+
+    /** Tabs: REPL, Editor, Registers on phones; REPL, Registers on wide screens. */
+    private fun rebuildTabs(wide: Boolean) {
+        if (tabsWide == wide) return
+        tabsWide = wide
+        rebuildingTabs = true
+        tabs.removeAllTabs()
+        val order = if (wide) listOf(Screen.REPL, Screen.REGISTERS) else listOf(Screen.REPL, Screen.EDITOR, Screen.REGISTERS)
+        for (s in order) {
+            val label = when (s) { Screen.REPL -> R.string.tab_repl; Screen.EDITOR -> R.string.tab_editor; Screen.REGISTERS -> R.string.tab_registers }
+            tabs.addTab(tabs.newTab().setText(label).setTag(s), false)
+        }
+        rebuildingTabs = false
+    }
 
     private fun applyLayout() {
         val wide = isWide()
-        tabs.visibility = if (wide) View.GONE else View.VISIBLE
+        rebuildTabs(wide)
+        if (wide && screen == Screen.EDITOR) screen = Screen.REPL
+        rebuildingTabs = true
+        for (i in 0 until tabs.tabCount) {
+            val t = tabs.getTabAt(i) ?: continue
+            if (t.tag == screen && !t.isSelected) t.select()
+        }
+        rebuildingTabs = false
+
+        editorPane.visibility = if (wide || screen == Screen.EDITOR) View.VISIBLE else View.GONE
         divider.visibility = if (wide) View.VISIBLE else View.GONE
-        replPane.visibility = if (wide || !registersTab) View.VISIBLE else View.GONE
-        registersPane.visibility = if (registersVisible()) View.VISIBLE else View.GONE
-        if (!wide && registersTab) {
-            getSystemService(InputMethodManager::class.java)
-                ?.hideSoftInputFromWindow(registersPane.windowToken, 0)
+        rightPane.visibility = if (wide || screen != Screen.EDITOR) View.VISIBLE else View.GONE
+        replPane.visibility = if (screen == Screen.REGISTERS) View.GONE else View.VISIBLE
+        registersPane.visibility = if (screen == Screen.REGISTERS) View.VISIBLE else View.GONE
+
+        if (!wide) {
+            when (screen) {
+                Screen.REPL -> console.focusInput()
+                Screen.EDITOR -> editor.editor.requestFocus()
+                Screen.REGISTERS -> getSystemService(InputMethodManager::class.java)
+                    ?.hideSoftInputFromWindow(registersPane.windowToken, 0)
+            }
         }
         if (registersVisible() && started) registers.refresh()
+        updateStrip()
+    }
+
+    /** Where the suggestion strip and the extra keys type into. */
+    private fun activeInput(): InputTarget? {
+        if (!isWide()) {
+            return when (screen) {
+                Screen.REPL -> console
+                Screen.EDITOR -> editor
+                Screen.REGISTERS -> null
+            }
+        }
+        if (editor.editor.hasFocus()) return editor
+        if (screen == Screen.REGISTERS) return editor
+        return lastInput ?: console
+    }
+
+    private fun updateStrip() {
+        val target = activeInput()
+        strip.update(target)
+        extraKeysScroll.visibility = if (target == null) View.GONE else View.VISIBLE
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         applyLayout()
+    }
+
+    private fun stop() {
+        vm.stop()
+        console.markDictionaryStale()
     }
 
     private fun showMenu(anchor: View) {
@@ -160,6 +277,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.raw_mode -> console.setRawMode(!console.rawMode)
                 R.id.copy_all -> console.copyAll()
                 R.id.clear_screen -> console.clear()
+                R.id.project_folder -> pickFolder.launch(folder.treeUri)
             }
             true
         }
@@ -173,15 +291,23 @@ class MainActivity : AppCompatActivity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
+            val inEditor = editor.editor.hasFocus()
+            if (inEditor && editor.onKeyShortcut(event)) return true
             if (event.isCtrlPressed) {
                 when (event.keyCode) {
-                    KeyEvent.KEYCODE_C -> { vm.stop(); console.markDictionaryStale(); return true }
+                    // In the editor Ctrl+C copies; elsewhere it stops Forth.
+                    KeyEvent.KEYCODE_C -> if (!inEditor) { stop(); return true }
                     KeyEvent.KEYCODE_L -> { console.clear(); return true }
+                    KeyEvent.KEYCODE_SPACE -> { activeInput()?.let { Completion.tab(it) }; return true }
                 }
             }
-            if (event.keyCode == KeyEvent.KEYCODE_TAB && replPane.visibility == View.VISIBLE) {
-                console.complete()
-                return true
+            if (event.keyCode == KeyEvent.KEYCODE_TAB && !event.isCtrlPressed) {
+                val target = activeInput()
+                if (target != null) {
+                    if (inEditor && target.currentToken().isEmpty()) target.insertText("  ")
+                    else Completion.tab(target)
+                    return true
+                }
             }
         }
         return super.dispatchKeyEvent(event)
@@ -203,6 +329,16 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(autosave)
         vm.setForeground(false)
         console.history.save()
+        editor.saveAll()
+        sessionStore.save(
+            SessionStore.Session(
+                files = editor.sessionFiles(),
+                activeFile = editor.activeIndex().coerceAtLeast(0),
+                screen = screen.name,
+                rawMode = console.rawMode,
+            )
+        )
+        sessionStore.saveConsole(console.savedText())
         Thread { vm.saveFlash() }.start()
         super.onStop()
     }
@@ -210,8 +346,6 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putCharSequence(KEY_OUTPUT, console.savedText())
-        outState.putBoolean(KEY_RAW, console.rawMode)
-        outState.putBoolean(KEY_REGISTERS_TAB, registersTab)
     }
 
     companion object {
@@ -220,7 +354,5 @@ class MainActivity : AppCompatActivity() {
         private const val AUTOSAVE_MS = 5000L
         private const val WIDE_DP = 600
         private const val KEY_OUTPUT = "output"
-        private const val KEY_RAW = "raw"
-        private const val KEY_REGISTERS_TAB = "registersTab"
     }
 }

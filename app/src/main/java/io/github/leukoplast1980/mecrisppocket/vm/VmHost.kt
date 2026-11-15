@@ -7,6 +7,7 @@ package io.github.leukoplast1980.mecrisppocket.vm
 import android.content.Context
 import android.util.Log
 import io.github.leukoplast1980.mecrisppocket.forth.Dictionary
+import io.github.leukoplast1980.mecrisppocket.forth.LineResult
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -173,6 +174,14 @@ class VmHost private constructor(context: Context) {
     }
 
     fun read(buffer: ByteArray): Int = NativeVm.uartRead(handle, buffer)
+
+    /** Sends one source line and waits for Forth's answer. Blocks: not on the UI thread. */
+    fun sendLineChecked(line: String, timeoutMs: Int): LineResult =
+        when (NativeVm.sendLine(handle, line.toByteArray(Charsets.UTF_8), timeoutMs)) {
+            0 -> LineResult.OK
+            1 -> LineResult.ERROR
+            else -> LineResult.TIMEOUT
+        }
 
     companion object {
         private const val TAG = "VmHost"

@@ -23,6 +23,7 @@
 #define DEV_SLOT_LAST  0xCu          /* GPIO */
 #define DEV_WORDS    64u             /* registers per generic device slot */
 #define MAX_WAIT_MS  100
+#define TAIL_SIZE    256u            /* power of two: recent output kept for qp_send_line */
 
 struct ring {
     uint8_t buf[RING_SIZE];
@@ -90,6 +91,8 @@ struct qp_vm {
 
     struct ring rx, tx;
     _Atomic int tx_new;
+    uint8_t tail[TAIL_SIZE];      /* last output bytes (VM thread) */
+    uint64_t tx_total;            /* bytes ever output (VM thread) */
 
     /* Time */
     uint64_t start_ns;
@@ -270,6 +273,8 @@ static void dev_write_word(qp_vm *vm, uint32_t a, uint32_t v)
         return;
     case 0x1:
         if (off == 0) {
+            vm->tail[vm->tx_total & (TAIL_SIZE - 1)] = (uint8_t)v;
+            vm->tx_total++;
             ring_push(&vm->tx, (uint8_t)v);
             atomic_store_explicit(&vm->tx_new, 1, memory_order_release);
         }
@@ -726,6 +731,58 @@ int qp_wait_idle(qp_vm *vm, int timeout_ms)
         pthread_cond_timedwait(&vm->host_cv, &vm->lock, &dl);
     pthread_mutex_unlock(&vm->lock);
     return idle;
+}
+
+struct tail_io { uint64_t total; uint8_t bytes[TAIL_SIZE]; };
+
+static void tail_fn(qp_vm *vm, void *arg)
+{
+    struct tail_io *io = arg;
+    io->total = vm->tx_total;
+    for (uint32_t i = 0; i < TAIL_SIZE; i++)   /* oldest first */
+        io->bytes[i] = vm->tail[(vm->tx_total + i) & (TAIL_SIZE - 1)];
+}
+
+int qp_send_line(qp_vm *vm, const char *line, size_t len, int timeout_ms)
+{
+    struct tail_io before, after;
+    run_on_vm(vm, tail_fn, &before);
+
+    struct timespec dl;
+    deadline_after_ms(&dl, timeout_ms);
+    size_t off = 0;
+    const char nl = '\n';
+    while (off < len) {
+        size_t n = qp_uart_write(vm, (const uint8_t *)line + off, len - off);
+        off += n;
+        if (!n) {
+            if (ts_passed(&dl)) return QP_LINE_TIMEOUT;
+            struct timespec ts = { 0, 1000000L };
+            nanosleep(&ts, NULL);
+        }
+    }
+    while (!qp_uart_write(vm, (const uint8_t *)&nl, 1)) {
+        if (ts_passed(&dl)) return QP_LINE_TIMEOUT;
+        struct timespec ts = { 0, 1000000L };
+        nanosleep(&ts, NULL);
+    }
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long left = (long)(dl.tv_sec - now.tv_sec) * 1000 + (dl.tv_nsec - now.tv_nsec) / 1000000;
+    if (left <= 0 || !qp_wait_idle(vm, (int)left)) return QP_LINE_TIMEOUT;
+
+    run_on_vm(vm, tail_fn, &after);
+    uint64_t produced = after.total - before.total;
+    if (produced == 0) return QP_LINE_ERROR;
+    if (produced > TAIL_SIZE) produced = TAIL_SIZE;
+
+    /* Output of this line, without trailing line end and spaces. */
+    const uint8_t *out = after.bytes + (TAIL_SIZE - produced);
+    size_t n = (size_t)produced;
+    while (n && (out[n - 1] == '\n' || out[n - 1] == '\r' || out[n - 1] == ' ')) n--;
+    if (n >= 4 && !memcmp(out + n - 4, " ok.", 4)) return QP_LINE_OK;
+    return QP_LINE_ERROR;
 }
 
 /* ---------------------------------------------------------------------- */

@@ -24,6 +24,21 @@ class Word(
 
 class Dictionary(val words: List<Word>) {
 
+    /** Newest definition of each name (case-folded). */
+    private val byName: Map<String, Word> = HashMap<String, Word>().also { m ->
+        for (w in words) m.putIfAbsent(foldCase(w.name), w)
+    }
+
+    /** How Forth knows a case-folded name, or null if it does not. */
+    fun lookup(folded: String): WordOrigin? =
+        byName[folded]?.let { if (it.user) WordOrigin.USER else WordOrigin.CORE }
+
+    /** Adds names Forth does not know yet (e.g. defined in an open file), for completion only. */
+    fun plusNames(names: Collection<String>): Dictionary {
+        val extra = names.filter { foldCase(it) !in byName }.map { Word(it, 0, 0, 0, user = true) }
+        return if (extra.isEmpty()) this else Dictionary(words + extra)
+    }
+
     /** Words sorted by code address, for [wordAt]. */
     private val byCode = words.sortedBy { it.code.toUInt() }
     private val headers = words.map { it.header.toUInt() }.sorted()

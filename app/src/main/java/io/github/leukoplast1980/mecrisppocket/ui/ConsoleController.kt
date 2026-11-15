@@ -1,6 +1,5 @@
 /*
- * Mecrisp Pocket - the REPL: output, line and raw input, completion
- * suggestions, extra keys and history.
+ * Mecrisp Pocket - the REPL: output, line and raw input, and history.
  * Copyright (C) 2026 The Mecrisp Pocket authors. GPL-3.0-or-later.
  */
 package io.github.leukoplast1980.mecrisppocket.ui
@@ -11,36 +10,36 @@ import android.content.ClipboardManager
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.KeyEvent
-import android.view.LayoutInflater
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
-import android.widget.HorizontalScrollView
-import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import io.github.leukoplast1980.mecrisppocket.R
 import io.github.leukoplast1980.mecrisppocket.forth.Dictionary
 import io.github.leukoplast1980.mecrisppocket.forth.History
-import io.github.leukoplast1980.mecrisppocket.forth.Word
 import io.github.leukoplast1980.mecrisppocket.vm.VmHost
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
 
-class ConsoleController(private val activity: Activity, private val vm: VmHost) {
+class ConsoleController(
+    private val activity: Activity,
+    private val vm: VmHost,
+    /** Input text or cursor changed: update the suggestion strip. */
+    private val onInputChanged: () -> Unit,
+    /** The dictionary was re-read: completion and highlighting can update. */
+    private val onDictionaryChanged: () -> Unit,
+) : InputTarget {
 
     private val output: TextView = activity.findViewById(R.id.output)
     private val scroll: ScrollView = activity.findViewById(R.id.scroll)
-    private val input: EditText = activity.findViewById(R.id.input)
-    private val rawInput: RawInputView = activity.findViewById(R.id.rawInput)
+    val input: EditText = activity.findViewById(R.id.input)
+    val rawInput: RawInputView = activity.findViewById(R.id.rawInput)
     private val sendButton: Button = activity.findViewById(R.id.send)
-    private val suggestionScroll: HorizontalScrollView = activity.findViewById(R.id.suggestionScroll)
-    private val suggestions: LinearLayout = activity.findViewById(R.id.suggestions)
-    private val extraKeys: LinearLayout = activity.findViewById(R.id.extraKeys)
 
     val history = History(File(activity.filesDir, "history.txt"))
 
@@ -82,13 +81,11 @@ class ConsoleController(private val activity: Activity, private val vm: VmHost) 
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) = updateSuggestions()
+            override fun afterTextChanged(s: Editable?) = onInputChanged()
         })
 
         rawInput.onText = { text -> sendRaw(text) }
         rawInput.onSpecialKey = { event -> rawSpecialKey(event) }
-
-        buildExtraKeys()
     }
 
     // ------------------------------------------------------------------
@@ -123,7 +120,7 @@ class ConsoleController(private val activity: Activity, private val vm: VmHost) 
                 vm.refreshDictionary()
                 activity.runOnUiThread {
                     dictionaryLoading = false
-                    updateSuggestions()
+                    onDictionaryChanged()
                 }
             }.start()
         }
@@ -157,13 +154,13 @@ class ConsoleController(private val activity: Activity, private val vm: VmHost) 
         Toast.makeText(activity, R.string.copied, Toast.LENGTH_SHORT).show()
     }
 
-    /** Last part of the console, for saving across activity recreation. */
+    /** The end of the console, for saving between runs. */
     fun savedText(): CharSequence {
         val t = output.text
-        return t.subSequence(maxOf(0, t.length - 20_000), t.length)
+        return t.subSequence(maxOf(0, t.length - SAVED_CHARS), t.length)
     }
 
-    private fun scrollToEnd() {
+    fun scrollToEnd() {
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
@@ -180,13 +177,15 @@ class ConsoleController(private val activity: Activity, private val vm: VmHost) 
         input.visibility = if (raw) View.GONE else View.VISIBLE
         sendButton.visibility = if (raw) View.GONE else View.VISIBLE
         rawInput.visibility = if (raw) View.VISIBLE else View.GONE
-        if (raw) rawInput.showKeyboard() else input.requestFocus()
-        updateSuggestions()
+        focusInput()
+        onInputChanged()
     }
 
     fun focusInput() {
         if (rawMode) rawInput.showKeyboard() else input.requestFocus()
     }
+
+    fun hasFocus(): Boolean = input.hasFocus() || rawInput.hasFocus()
 
     private fun sendLine() {
         val line = input.text.toString()
@@ -209,7 +208,7 @@ class ConsoleController(private val activity: Activity, private val vm: VmHost) 
     private fun sendRaw(text: String) {
         send(text)
         rawLine.append(text)
-        updateSuggestions()
+        onInputChanged()
     }
 
     private fun rawSpecialKey(event: KeyEvent): Boolean {
@@ -225,18 +224,28 @@ class ConsoleController(private val activity: Activity, private val vm: VmHost) 
                 send("\b")
                 if (rawLine.isNotEmpty()) rawLine.setLength(rawLine.length - 1)
             }
-            KeyEvent.KEYCODE_TAB -> complete()
+            KeyEvent.KEYCODE_TAB -> Completion.tab(this)
             else -> return false
         }
-        updateSuggestions()
+        onInputChanged()
         return true
     }
 
     // ------------------------------------------------------------------
-    // Completion
+    // InputTarget
 
-    /** The partial word before the cursor. */
-    private fun currentToken(): String {
+    override fun insertText(text: String) {
+        if (rawMode) {
+            sendRaw(text)
+        } else {
+            val start = input.selectionStart.coerceAtLeast(0)
+            val end = input.selectionEnd.coerceAtLeast(0)
+            input.text.replace(minOf(start, end), maxOf(start, end), text)
+            input.requestFocus()
+        }
+    }
+
+    override fun currentToken(): String {
         val text: CharSequence
         val end: Int
         if (rawMode) {
@@ -251,111 +260,39 @@ class ConsoleController(private val activity: Activity, private val vm: VmHost) 
         return text.subSequence(start, end).toString()
     }
 
-    private fun updateSuggestions() {
-        val token = currentToken()
-        val matches = vm.dictionary.complete(token)
-        suggestions.removeAllViews()
-        if (matches.isEmpty() || (matches.size == 1 && matches[0].name == token)) {
-            suggestionScroll.visibility = View.GONE
-            return
-        }
-        val inflater = LayoutInflater.from(activity)
-        for (w in matches) {
-            val chip = inflater.inflate(R.layout.suggestion, suggestions, false) as TextView
-            chip.text = w.name
-            if (w.user) chip.setTextColor(activity.getColor(R.color.accent))
-            chip.setOnClickListener { applyCompletion(token, w.name, true) }
-            suggestions.addView(chip)
-        }
-        suggestionScroll.visibility = View.VISIBLE
-        suggestionScroll.scrollTo(0, 0)
-    }
-
-    /** Tab: completes a unique match, or as far as all matches agree. */
-    fun complete() {
-        val token = currentToken()
-        val matches = vm.dictionary.complete(token, limit = 1000)
-        if (matches.isEmpty()) return
-        if (matches.size == 1) {
-            applyCompletion(token, matches[0].name, true)
-        } else {
-            val prefix = commonPrefix(matches)
-            if (prefix.length > token.length) applyCompletion(token, prefix, false)
-        }
-    }
-
-    private fun commonPrefix(words: List<Word>): String {
-        var prefix = words[0].name
-        for (w in words) {
-            var n = 0
-            while (n < prefix.length && n < w.name.length &&
-                Dictionary.foldCase(prefix[n].toString()) == Dictionary.foldCase(w.name[n].toString())
-            ) n++
-            prefix = prefix.substring(0, n)
-        }
-        return prefix
-    }
-
-    private fun applyCompletion(token: String, word: String, finished: Boolean) {
-        val suffix = (if (word.length >= token.length) word.substring(token.length) else "") +
-            (if (finished) " " else "")
+    override fun applyCompletion(token: String, word: String, finished: Boolean) {
+        val tail = if (finished) " " else ""
         if (rawMode) {
-            sendRaw(suffix)
+            sendRaw((if (word.length >= token.length) word.substring(token.length) else "") + tail)
         } else {
             val end = input.selectionStart.coerceIn(0, input.text.length)
-            val start = end - token.length
-            input.text.replace(start, end, word + if (finished) " " else "")
-            input.setSelection(start + word.length + if (finished) 1 else 0)
+            val start = (end - token.length).coerceAtLeast(0)
+            input.text.replace(start, end, word + tail)
+            input.setSelection(start + word.length + tail.length)
         }
         focusInput()
     }
 
-    // ------------------------------------------------------------------
-    // Extra keys
+    override fun completionDictionary(): Dictionary = vm.dictionary
 
-    private fun buildExtraKeys() {
-        val inflater = LayoutInflater.from(activity)
-        for (label in EXTRA_KEYS) {
-            val key = inflater.inflate(R.layout.extra_key, extraKeys, false) as TextView
-            key.text = label
-            key.setOnClickListener { extraKey(label) }
-            extraKeys.addView(key)
-        }
-    }
-
-    private fun extraKey(label: String) {
-        when (label) {
-            "Tab" -> complete()
-            "↑" -> if (!rawMode) recall(-1)
-            "↓" -> if (!rawMode) recall(1)
-            "←" -> if (!rawMode) moveCursor(-1) else rawSpecialKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))
-            "→" -> if (!rawMode) moveCursor(1)
-            else -> insert(label)
-        }
-    }
-
-    private fun insert(text: String) {
+    override fun arrow(keyCode: Int) {
         if (rawMode) {
-            sendRaw(text)
-        } else {
-            val start = input.selectionStart.coerceAtLeast(0)
-            val end = input.selectionEnd.coerceAtLeast(0)
-            input.text.replace(minOf(start, end), maxOf(start, end), text)
-            input.requestFocus()
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) rawSpecialKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))
+            return
         }
-    }
-
-    private fun moveCursor(delta: Int) {
-        val pos = (input.selectionStart + delta).coerceIn(0, input.text.length)
-        input.setSelection(pos)
-        input.requestFocus()
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> recall(-1)
+            KeyEvent.KEYCODE_DPAD_DOWN -> recall(1)
+            else -> {
+                val delta = if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+                input.setSelection((input.selectionStart + delta).coerceIn(0, input.text.length))
+                input.requestFocus()
+            }
+        }
     }
 
     companion object {
         private const val MAX_CHARS = 200_000
-        private val EXTRA_KEYS = listOf(
-            "Tab", ":", ";", "(", ")", "@", "!", ".", "\"", "'", "$", "#", "%",
-            "←", "→", "↑", "↓",
-        )
+        private const val SAVED_CHARS = 20_000
     }
 }

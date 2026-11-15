@@ -101,6 +101,17 @@ int qp_waiting_for_key(qp_vm *vm);
  * Returns 1 if idle. */
 int qp_wait_idle(qp_vm *vm, int timeout_ms);
 
+/* Result of qp_send_line. */
+#define QP_LINE_OK      0   /* Forth answered " ok." */
+#define QP_LINE_ERROR   1   /* Forth printed an error instead */
+#define QP_LINE_TIMEOUT 2   /* Forth did not return to the prompt in time */
+
+/* Sends one line of source (without line end) and waits until Forth is
+ * idle again, then checks whether its output for this line ended with
+ * " ok.". This is how a file is loaded line by line, like e4thcom does.
+ * Output stays in the UART buffer for the caller to display. */
+int qp_send_line(qp_vm *vm, const char *line, size_t len, int timeout_ms);
+
 /* Debug access: memory reads have no device side effects. */
 size_t qp_read_memory(qp_vm *vm, uint32_t addr, uint8_t *buf, size_t len);
 void qp_snapshot_get(qp_vm *vm, qp_snapshot *out);
