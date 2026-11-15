@@ -115,6 +115,7 @@ expect "where is the CPU"   "where: pc [0-9a-f]+ in spin"    -e ": spin begin ag
 # Loading a file line by line stops at the first error.
 FILES=$(cd "$(dirname "$0")/files" && pwd)
 expect "load a file"        "^7 sq \. 49  ok\.$"             -f "$FILES/good.fs"
+expect "multi-line definition in a file" "^-5 clamp \. 9 clamp \. 0 9  ok\.$" -f "$FILES/good.fs"
 out=$(timeout 20 "$QPEMU" --flash "$FLASH" --timeout 3000 "$IMAGE" -f "$FILES/bad.fs" </dev/null 2>&1); rc=$?
 if [ $rc -eq 3 ] && printf '%s\n' "$out" | grep -q "bad.fs:5: error" && ! printf '%s\n' "$out" | grep -q ": c 3 ;"; then
     pass=$((pass + 1)); echo "ok   load stops at the first error"
