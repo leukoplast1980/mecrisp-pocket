@@ -50,7 +50,7 @@ between runs. Run `qpemu` without arguments for its options.
 Tests:
 
 ```sh
-tests/forth/run.sh build/emu/qpemu build/core/core.bin build/forth
+tests/forth/run.sh build/emu/qpemu build/core/core.bin build/forth build/core/core.syms
 tests/riscv/run.sh path/to/riscv-tests build/emu/isa-runner build/isa
 ```
 

@@ -105,6 +105,14 @@ int qp_wait_idle(qp_vm *vm, int timeout_ms);
 size_t qp_read_memory(qp_vm *vm, uint32_t addr, uint8_t *buf, size_t len);
 void qp_snapshot_get(qp_vm *vm, qp_snapshot *out);
 
+/* Runs fn on the VM thread with direct read access to flash and RAM. */
+void qp_with_memory(qp_vm *vm,
+                    void (*fn)(const uint8_t *flash, const uint8_t *ram, void *arg),
+                    void *arg);
+
+/* Reads several device registers at once, without side effects. */
+void qp_get_device_regs(qp_vm *vm, const uint32_t *addrs, uint32_t *values, int count);
+
 /* Device inputs from the host side. */
 void qp_raise_irq(qp_vm *vm, uint32_t bits);
 void qp_set_device_reg(qp_vm *vm, uint32_t addr, uint32_t value);

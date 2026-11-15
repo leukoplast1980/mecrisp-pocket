@@ -25,4 +25,16 @@ object NativeVm {
     @JvmStatic external fun uartWrite(handle: Long, data: ByteArray, offset: Int, length: Int): Int
     @JvmStatic external fun uartRead(handle: Long, buffer: ByteArray): Int
     @JvmStatic external fun waitingForKey(handle: Long): Boolean
+
+    /** See [Snapshot] for the layout. */
+    @JvmStatic external fun snapshot(handle: Long): IntArray
+    @JvmStatic external fun deviceRegs(handle: Long, addresses: IntArray): IntArray
+    @JvmStatic external fun readMemory(handle: Long, address: Int, length: Int): ByteArray?
+
+    /**
+     * Returns { names: ByteArray (UTF-8, concatenated), nameLengths: IntArray,
+     * headers: IntArray, codes: IntArray, flags: IntArray } in search order.
+     * layout = CoreDictionaryAnfang, Dictionarypointer, Fadenende, ZweitFadenende.
+     */
+    @JvmStatic external fun dictionary(handle: Long, layout: IntArray): Array<Any>?
 }

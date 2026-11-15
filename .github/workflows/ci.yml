@@ -39,7 +39,7 @@ jobs:
         run: tests/riscv/run.sh riscv-tests build/emu/isa-runner build/isa
 
       - name: Forth tests
-        run: tests/forth/run.sh build/emu/qpemu build/core/core.bin build/forth
+        run: tests/forth/run.sh build/emu/qpemu build/core/core.bin build/forth build/core/core.syms
 
   android:
     name: Android APK
@@ -59,8 +59,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug
+      - name: Unit tests and debug APK
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
 
       - uses: actions/upload-artifact@v5
         with:

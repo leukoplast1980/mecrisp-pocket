@@ -568,6 +568,40 @@ uint32_t qp_get_device_reg(qp_vm *vm, uint32_t addr)
     return io.value;
 }
 
+struct mem_job {
+    void (*fn)(const uint8_t *flash, const uint8_t *ram, void *arg);
+    void *arg;
+};
+
+static void with_memory_fn(qp_vm *vm, void *arg)
+{
+    struct mem_job *job = arg;
+    job->fn(vm->flash, vm->ram, job->arg);
+}
+
+void qp_with_memory(qp_vm *vm,
+                    void (*fn)(const uint8_t *flash, const uint8_t *ram, void *arg),
+                    void *arg)
+{
+    struct mem_job job = { fn, arg };
+    run_on_vm(vm, with_memory_fn, &job);
+}
+
+struct regs_io { const uint32_t *addrs; uint32_t *values; int count; };
+
+static void get_regs_fn(qp_vm *vm, void *arg)
+{
+    struct regs_io *io = arg;
+    for (int i = 0; i < io->count; i++)
+        io->values[i] = in_device_space(io->addrs[i]) ? dev_read_word_peek(vm, io->addrs[i]) : 0;
+}
+
+void qp_get_device_regs(qp_vm *vm, const uint32_t *addrs, uint32_t *values, int count)
+{
+    struct regs_io io = { addrs, values, count };
+    run_on_vm(vm, get_regs_fn, &io);
+}
+
 void qp_raise_irq(qp_vm *vm, uint32_t bits)
 {
     atomic_fetch_or(&vm->raise_bits, bits);

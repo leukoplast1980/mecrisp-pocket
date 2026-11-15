@@ -44,6 +44,12 @@ kotlin {
     jvmToolchain(17)
 }
 
+dependencies {
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    testImplementation("junit:junit:4.13.2")
+}
+
 // Assembles the Mecrisp-Quintus core for the board and packs it as an asset.
 // Needs GNU binutils for RISC-V (Debian/Ubuntu: binutils-riscv64-linux-gnu).
 val buildPocketImage by tasks.registering(Exec::class) {

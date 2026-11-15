@@ -10,7 +10,7 @@ endif()
 
 find_package(Threads REQUIRED)
 
-add_library(qpcore STATIC src/rv32.c src/pocket.c)
+add_library(qpcore STATIC src/rv32.c src/pocket.c src/dict.c)
 target_include_directories(qpcore PUBLIC include PRIVATE src)
 target_link_libraries(qpcore PUBLIC Threads::Threads)
 set_target_properties(qpcore PROPERTIES POSITION_INDEPENDENT_CODE ON)

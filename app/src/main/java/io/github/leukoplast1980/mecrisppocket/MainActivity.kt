@@ -1,49 +1,59 @@
 /*
- * Mecrisp Pocket - minimal console (milestone 1).
+ * Mecrisp Pocket - main screen: REPL and Registers, as tabs on phones and
+ * side by side on wide screens.
  * Copyright (C) 2026 The Mecrisp Pocket authors. GPL-3.0-or-later.
  */
 package io.github.leukoplast1980.mecrisppocket
 
-import android.app.Activity
-import android.os.Build
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
-import android.view.WindowInsets
-import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
-import android.widget.EditText
-import android.widget.ScrollView
+import android.widget.ImageButton
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.tabs.TabLayout
+import io.github.leukoplast1980.mecrisppocket.ui.ConsoleController
+import io.github.leukoplast1980.mecrisppocket.ui.RegistersController
 import io.github.leukoplast1980.mecrisppocket.vm.VmHost
-import java.nio.ByteBuffer
-import java.nio.CharBuffer
-import java.nio.charset.CodingErrorAction
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
 
     private lateinit var vm: VmHost
-    private lateinit var output: TextView
-    private lateinit var scroll: ScrollView
-    private lateinit var input: EditText
+    private lateinit var console: ConsoleController
+    private lateinit var registers: RegistersController
+
+    private lateinit var tabs: TabLayout
+    private lateinit var replPane: View
+    private lateinit var registersPane: View
+    private lateinit var divider: View
+    private lateinit var title: TextView
 
     private val handler = Handler(Looper.getMainLooper())
-    private val readBuffer = ByteArray(4096)
-    private val decoder = Charsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPLACE)
-        .onUnmappableCharacter(CodingErrorAction.REPLACE)
-    private val pending = ByteBuffer.allocate(8192)
-    private val chars = CharBuffer.allocate(8192)
-    private val history = ArrayList<String>()
-    private var historyPos = 0
+    private var started = false
+    private var registersTab = false
 
     private val poll = object : Runnable {
         override fun run() {
-            drainOutput()
+            console.poll()
+            updateTitle()
             handler.postDelayed(this, POLL_MS)
+        }
+    }
+
+    private val registerRefresh = object : Runnable {
+        override fun run() {
+            if (registersVisible()) registers.refresh()
+            handler.postDelayed(this, REGISTERS_MS)
         }
     }
 
@@ -56,142 +66,161 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
         // The input line is not a login form: keep password managers away.
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+
         vm = VmHost.get(this)
+        console = ConsoleController(this, vm)
+        registers = RegistersController(this, vm)
 
-        output = findViewById(R.id.output)
-        scroll = findViewById(R.id.scroll)
-        input = findViewById(R.id.input)
+        tabs = findViewById(R.id.tabs)
+        replPane = findViewById(R.id.replPane)
+        registersPane = findViewById(R.id.registersPane)
+        divider = findViewById(R.id.paneDivider)
+        title = findViewById(R.id.title)
 
-        savedInstanceState?.getCharSequence(KEY_OUTPUT)?.let { output.text = it }
+        val root = findViewById<View>(R.id.root)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
 
-        findViewById<Button>(R.id.stop).setOnClickListener { vm.stop() }
+        findViewById<Button>(R.id.stop).setOnClickListener {
+            vm.stop()
+            console.markDictionaryStale()
+        }
         findViewById<Button>(R.id.reset).apply {
-            setOnClickListener { vm.reset(safeBoot = false) }
+            setOnClickListener {
+                vm.reset(safeBoot = false)
+                console.markDictionaryStale()
+            }
             setOnLongClickListener {
                 vm.reset(safeBoot = true)
+                console.markDictionaryStale()
                 Toast.makeText(this@MainActivity, R.string.safe_boot, Toast.LENGTH_SHORT).show()
                 true
             }
         }
-        findViewById<Button>(R.id.send).setOnClickListener { sendInput() }
+        findViewById<ImageButton>(R.id.menu).setOnClickListener { showMenu(it) }
 
-        input.setOnEditorActionListener { _, actionId, event ->
-            val enter = event != null && event.keyCode == KeyEvent.KEYCODE_ENTER &&
-                event.action == KeyEvent.ACTION_DOWN
-            if (actionId == EditorInfo.IME_ACTION_SEND || enter) {
-                sendInput()
-                true
-            } else {
-                false
+        tabs.addTab(tabs.newTab().setText(R.string.tab_repl))
+        tabs.addTab(tabs.newTab().setText(R.string.tab_registers))
+        tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                registersTab = tab.position == 1
+                applyLayout()
             }
-        }
-        input.setOnKeyListener { _, keyCode, event ->
-            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP -> { recall(-1); true }
-                KeyEvent.KEYCODE_DPAD_DOWN -> { recall(1); true }
-                else -> false
-            }
-        }
+            override fun onTabUnselected(tab: TabLayout.Tab) {}
+            override fun onTabReselected(tab: TabLayout.Tab) {}
+        })
 
-        applyInsets(findViewById(R.id.root))
+        registers.onPausedChanged = { console.markDictionaryStale() }
 
-        if (vm.coreUpdateAvailable) appendText(getString(R.string.core_update_notice))
+        if (savedInstanceState != null) {
+            savedInstanceState.getCharSequence(KEY_OUTPUT)?.let { console.appendText(it.toString()) }
+            if (savedInstanceState.getBoolean(KEY_RAW)) console.setRawMode(true)
+            if (savedInstanceState.getBoolean(KEY_REGISTERS_TAB)) tabs.getTabAt(1)?.select()
+        }
+        if (vm.coreUpdateAvailable) console.appendText(getString(R.string.core_update_notice))
+
+        applyLayout()
     }
 
-    private fun applyInsets(root: View) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            root.setOnApplyWindowInsetsListener { v, insets ->
-                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
-                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-                WindowInsets.CONSUMED
-            }
-        } else {
-            root.fitsSystemWindows = true
+    private fun isWide(): Boolean = resources.configuration.screenWidthDp >= WIDE_DP
+
+    private fun registersVisible(): Boolean = isWide() || registersTab
+
+    private fun applyLayout() {
+        val wide = isWide()
+        tabs.visibility = if (wide) View.GONE else View.VISIBLE
+        divider.visibility = if (wide) View.VISIBLE else View.GONE
+        replPane.visibility = if (wide || !registersTab) View.VISIBLE else View.GONE
+        registersPane.visibility = if (registersVisible()) View.VISIBLE else View.GONE
+        if (!wide && registersTab) {
+            getSystemService(InputMethodManager::class.java)
+                ?.hideSoftInputFromWindow(registersPane.windowToken, 0)
         }
+        if (registersVisible() && started) registers.refresh()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyLayout()
+    }
+
+    private fun showMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        menu.menuInflater.inflate(R.menu.console, menu.menu)
+        menu.menu.findItem(R.id.raw_mode).isChecked = console.rawMode
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.raw_mode -> console.setRawMode(!console.rawMode)
+                R.id.copy_all -> console.copyAll()
+                R.id.clear_screen -> console.clear()
+            }
+            true
+        }
+        menu.show()
+    }
+
+    private fun updateTitle() {
+        val name = getString(R.string.app_name)
+        title.text = if (vm.isUserPaused) getString(R.string.paused_suffix, name) else name
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            if (event.isCtrlPressed) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_C -> { vm.stop(); console.markDictionaryStale(); return true }
+                    KeyEvent.KEYCODE_L -> { console.clear(); return true }
+                }
+            }
+            if (event.keyCode == KeyEvent.KEYCODE_TAB && replPane.visibility == View.VISIBLE) {
+                console.complete()
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onStart() {
         super.onStart()
-        vm.setRunning(true)
+        started = true
+        vm.setForeground(true)
         handler.post(poll)
+        handler.post(registerRefresh)
         handler.postDelayed(autosave, AUTOSAVE_MS)
     }
 
     override fun onStop() {
+        started = false
         handler.removeCallbacks(poll)
+        handler.removeCallbacks(registerRefresh)
         handler.removeCallbacks(autosave)
-        vm.setRunning(false)
+        vm.setForeground(false)
+        console.history.save()
         Thread { vm.saveFlash() }.start()
         super.onStop()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        // Keep the saved state small: Android limits its size.
-        val text = output.text
-        outState.putCharSequence(KEY_OUTPUT, text.subSequence(maxOf(0, text.length - 20_000), text.length))
-    }
-
-    private fun sendInput() {
-        val line = input.text.toString()
-        input.text.clear()
-        if (line.isNotBlank() && history.lastOrNull() != line) history.add(line)
-        historyPos = history.size
-        if (!vm.send(line + "\n")) {
-            Toast.makeText(this, R.string.input_full, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun recall(direction: Int) {
-        if (history.isEmpty()) return
-        historyPos = (historyPos + direction).coerceIn(0, history.size)
-        val text = if (historyPos < history.size) history[historyPos] else ""
-        input.setText(text)
-        input.setSelection(text.length)
-    }
-
-    private fun drainOutput() {
-        var gotAny = false
-        while (true) {
-            val n = vm.read(readBuffer)
-            if (n <= 0) break
-            gotAny = true
-            var off = 0
-            while (off < n) {
-                val take = minOf(n - off, pending.remaining())
-                pending.put(readBuffer, off, take)
-                off += take
-                pending.flip()
-                decoder.decode(pending, chars, false)
-                pending.compact()
-                chars.flip()
-                appendText(chars.toString().replace("\r", ""))
-                chars.clear()
-            }
-        }
-        if (gotAny) scrollToEnd()
-    }
-
-    private fun appendText(text: String) {
-        output.append(text)
-        val len = output.text.length
-        if (len > MAX_CHARS) {
-            output.text = output.text.subSequence(len - MAX_CHARS * 3 / 4, len)
-        }
-    }
-
-    private fun scrollToEnd() {
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN); input.requestFocus() }
+        outState.putCharSequence(KEY_OUTPUT, console.savedText())
+        outState.putBoolean(KEY_RAW, console.rawMode)
+        outState.putBoolean(KEY_REGISTERS_TAB, registersTab)
     }
 
     companion object {
         private const val POLL_MS = 30L
+        private const val REGISTERS_MS = 50L
         private const val AUTOSAVE_MS = 5000L
-        private const val MAX_CHARS = 200_000
+        private const val WIDE_DP = 600
         private const val KEY_OUTPUT = "output"
+        private const val KEY_RAW = "raw"
+        private const val KEY_REGISTERS_TAB = "registersTab"
     }
 }

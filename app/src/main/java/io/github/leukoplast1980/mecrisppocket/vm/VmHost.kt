@@ -6,6 +6,7 @@ package io.github.leukoplast1980.mecrisppocket.vm
 
 import android.content.Context
 import android.util.Log
+import io.github.leukoplast1980.mecrisppocket.forth.Dictionary
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -36,11 +37,33 @@ class VmHost private constructor(context: Context) {
 
     private val shippedImage: ByteArray
 
+    /** Core symbol addresses from pocket.json (CoreDictionaryAnfang, ...). */
+    val symbols: Map<String, Int>
+
+    private val dictionaryLayout: IntArray
+
+    /** The words Forth could find at the last [refreshDictionary]. */
+    @Volatile var dictionary: Dictionary = Dictionary.EMPTY
+        private set
+
+    private var foreground = false
+    private var userPaused = false
+
     init {
         val assets = context.assets
         shippedImage = assets.open("pocket.img").use { it.readBytes() }
         val meta = assets.open("pocket.json").use { JSONObject(it.reader().readText()) }
         shippedCoreHash = meta.getString("imageSha256")
+        val syms = meta.getJSONObject("symbols")
+        symbols = syms.keys().asSequence().associateWith {
+            java.lang.Long.decode(syms.getString(it)).toInt()
+        }
+        dictionaryLayout = intArrayOf(
+            symbols.getValue("CoreDictionaryAnfang"),
+            symbols.getValue("Dictionarypointer"),
+            symbols.getValue("Fadenende"),
+            symbols.getValue("ZweitFadenende"),
+        )
 
         val saved = readSaved()
         if (saved != null) {
@@ -102,7 +125,38 @@ class VmHost private constructor(context: Context) {
         NativeVm.pause(handle, false)
     }
 
-    fun setRunning(running: Boolean) = NativeVm.pause(handle, !running)
+    /** The activity is visible: the VM may run unless the user paused it. */
+    @Synchronized
+    fun setForeground(visible: Boolean) {
+        foreground = visible
+        NativeVm.pause(handle, !foreground || userPaused)
+    }
+
+    /** Pause button of the Registers view. */
+    @Synchronized
+    fun setUserPaused(paused: Boolean) {
+        userPaused = paused
+        NativeVm.pause(handle, !foreground || userPaused)
+    }
+
+    val isUserPaused: Boolean @Synchronized get() = userPaused
+
+    fun step() = NativeVm.step(handle)
+
+    fun snapshot(): Snapshot = Snapshot(NativeVm.snapshot(handle))
+    fun deviceRegs(addresses: IntArray): IntArray = NativeVm.deviceRegs(handle, addresses)
+    fun readMemory(address: Int, length: Int): ByteArray? = NativeVm.readMemory(handle, address, length)
+    fun waitingForKey(): Boolean = NativeVm.waitingForKey(handle)
+
+    /** Re-reads the dictionary from guest memory. Call off the UI thread. */
+    fun refreshDictionary(): Dictionary {
+        val d = Dictionary.fromNative(
+            NativeVm.dictionary(handle, dictionaryLayout),
+            symbols.getValue("FlashDictionaryAnfang"),
+        )
+        dictionary = d
+        return d
+    }
     fun stop() = NativeVm.requestBreak(handle)
     fun reset(safeBoot: Boolean) = NativeVm.requestReset(handle, safeBoot)
 

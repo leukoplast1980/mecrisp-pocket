@@ -10,6 +10,7 @@
  *   --virtual-time    counters follow the instruction count (reproducible)
  *   --timeout MS      how long to wait for Forth to become idle (default 5000)
  *   --stats           print instruction count and VM time on exit
+ *   --syms FILE       core symbol table (nm output), needed by --words
  *
  * Actions, run in order once Forth is idle at the prompt:
  *   -e TEXT           send TEXT as one line, wait until idle
@@ -19,12 +20,15 @@
  *   --break-after MS  wait MS milliseconds, press Stop, wait until idle
  *   --reset           press Reset, wait until idle
  *   --safe-reset      long-press Reset (safe boot), wait until idle
+ *   --words           print the dictionary as read by the C dictionary reader
+ *   --where           print pc and the word it is in
  *   -i                interactive: stdin goes to the terminal until EOF
  *
  * With no actions, qpemu runs interactively. Exit status is 0, or 2 if
  * Forth did not become idle within the timeout.
  */
 #define _POSIX_C_SOURCE 200809L
+#include "qp/dict.h"
 #include "qp/pocket.h"
 
 #include <pthread.h>
@@ -36,6 +40,8 @@
 #include <unistd.h>
 
 static qp_vm *vm;
+static qp_dict_layout layout;
+static int have_layout;
 static atomic_int output_done;
 static int timeout_ms = 5000;
 
@@ -119,6 +125,59 @@ static void interactive(void)
     wait_idle();
 }
 
+/* Reads the dictionary addresses from an nm listing (core.syms). */
+static int read_syms(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) { perror(path); return 0; }
+    char line[256], type[8], name[200];
+    unsigned addr;
+    int found = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (sscanf(line, "%x %7s %199s", &addr, type, name) != 3) continue;
+        if (!strcmp(name, "CoreDictionaryAnfang")) { layout.core_dictionary = addr; found |= 1; }
+        else if (!strcmp(name, "Dictionarypointer")) { layout.dictionary_ptr = addr; found |= 2; }
+        else if (!strcmp(name, "Fadenende")) { layout.latest = addr; found |= 4; }
+        else if (!strcmp(name, "ZweitFadenende")) { layout.latest2 = addr; found |= 8; }
+    }
+    fclose(f);
+    if (found != 15) { fprintf(stderr, "%s: dictionary symbols missing\n", path); return 0; }
+    return 1;
+}
+
+/* Prints the dictionary as seen by the C reader, one "word: NAME" per line. */
+static int print_words(void)
+{
+    if (!have_layout) { fprintf(stderr, "qpemu: --words needs --syms\n"); return 1; }
+    int max = 4096;
+    qp_word *w = malloc(sizeof *w * (size_t)max);
+    int n = qp_dict_list(vm, &layout, w, max);
+    sleep_ms(20);  /* let pending Forth output go first */
+    for (int k = 0; k < n && k < max; k++)
+        printf("word: %s %08x %08x%s\n", w[k].name, w[k].code, w[k].flags, w[k].in_ram ? " ram" : "");
+    fflush(stdout);
+    free(w);
+    return 0;
+}
+
+/* Prints where the CPU is: pc and the word containing it. */
+static int print_where(void)
+{
+    if (!have_layout) { fprintf(stderr, "qpemu: --where needs --syms\n"); return 1; }
+    qp_snapshot snap;
+    qp_snapshot_get(vm, &snap);
+    int max = 4096;
+    qp_word *w = malloc(sizeof *w * (size_t)max);
+    int n = qp_dict_list(vm, &layout, w, max);
+    int i = qp_dict_word_at(w, n < max ? n : max, snap.pc);
+    sleep_ms(20);
+    if (i >= 0) printf("where: pc %08x in %s +%u\n", snap.pc, w[i].name, snap.pc - w[i].code);
+    else printf("where: pc %08x\n", snap.pc);
+    fflush(stdout);
+    free(w);
+    return 0;
+}
+
 static uint8_t *read_file(const char *path, size_t *len)
 {
     FILE *f = fopen(path, "rb");
@@ -147,6 +206,10 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--flash") && i + 1 < argc) flash_path = argv[++i];
         else if (!strcmp(argv[i], "--virtual-time")) cfg.virtual_time = 1;
         else if (!strcmp(argv[i], "--stats")) stats = 1;
+        else if (!strcmp(argv[i], "--syms") && i + 1 < argc) {
+            if (!read_syms(argv[++i])) return 1;
+            have_layout = 1;
+        }
         else if (!strcmp(argv[i], "--timeout") && i + 1 < argc) timeout_ms = atoi(argv[++i]);
         else usage();
     }
@@ -192,6 +255,10 @@ int main(int argc, char **argv)
         } else if (!strcmp(a, "--safe-reset")) {
             qp_request_reset(vm, 1);
             rc = wait_idle();
+        } else if (!strcmp(a, "--where")) {
+            rc = print_where();
+        } else if (!strcmp(a, "--words")) {
+            rc = print_words();
         } else if (!strcmp(a, "-i")) {
             interactive();
         } else {

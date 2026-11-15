@@ -4,8 +4,20 @@
     <string name="stop">Stop</string>
     <string name="reset">Reset</string>
     <string name="send">Send</string>
+    <string name="more">More options</string>
     <string name="input_hint">Forth</string>
+    <string name="raw_hint">Raw mode: keys go straight to Forth</string>
     <string name="safe_boot">Safe boot: init is skipped</string>
     <string name="input_full">Forth is not reading input</string>
     <string name="core_update_notice">[A new Quintus core came with this app version. Your saved flash words still run on the old core. Run eraseflash to switch.]\n</string>
+    <string name="tab_repl">REPL</string>
+    <string name="tab_registers">Registers</string>
+    <string name="raw_mode">Raw mode</string>
+    <string name="copy_all">Copy all</string>
+    <string name="clear_screen">Clear screen</string>
+    <string name="copied">Console copied</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="step">Step</string>
+    <string name="paused_suffix">%1$s · paused</string>
 </resources>
