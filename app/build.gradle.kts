@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "io.github.leukoplast1980.mecrisppocket"
     compileSdk = 36
+    ndkVersion = "27.0.12077973"  // pinned for reproducible (F-Droid) builds
 
     defaultConfig {
         applicationId = "io.github.leukoplast1980.mecrisppocket"
