@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
+    android:importantForAutofill="noExcludeDescendants"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/console_background"
@@ -73,7 +74,7 @@
             android:hint="@string/input_hint"
             android:imeOptions="actionSend|flagNoExtractUi"
             android:importantForAutofill="no"
-            android:inputType="text|textNoSuggestions|textVisiblePassword"
+            android:inputType="text|textNoSuggestions"
             android:maxLines="1"
             android:textColor="@color/console_text"
             android:textColorHint="@color/console_hint"
