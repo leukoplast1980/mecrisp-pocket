@@ -56,12 +56,26 @@ class ConsoleController(
     private val pending = ByteBuffer.allocate(8192)
     private val chars = CharBuffer.allocate(8192)
 
+    /** Keep showing the newest output; off while the user reads further up. */
+    private var followOutput = true
+
     /** Set when Forth may have changed its dictionary; re-read when it is idle. */
     private var dictionaryStale = true
     private var dictionaryLoading = false
 
     init {
         output.setText("", TextView.BufferType.EDITABLE)
+
+        // New output (after layout, when its height is known) and a smaller
+        // console (keyboard opening) keep the end in view while following.
+        val follow = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (followOutput) scroll.scrollTo(0, output.bottom)
+        }
+        output.addOnLayoutChangeListener(follow)
+        scroll.addOnLayoutChangeListener(follow)
+        scroll.setOnScrollChangeListener { _, _, _, _, _ ->
+            if (scroll.isLaidOut && output.isLaidOut) followOutput = atEnd()
+        }
 
         sendButton.setOnClickListener { sendLine() }
         input.setOnEditorActionListener { _, actionId, event ->
@@ -111,7 +125,7 @@ class ConsoleController(
                 chars.clear()
             }
         }
-        if (gotAny) scrollToEnd()
+        if (gotAny && followOutput) scroll.post { scroll.scrollTo(0, output.bottom) }
 
         if (dictionaryStale && !dictionaryLoading && vm.waitingForKey()) {
             dictionaryStale = false
@@ -160,9 +174,17 @@ class ConsoleController(
         return t.subSequence(maxOf(0, t.length - SAVED_CHARS), t.length)
     }
 
+    /**
+     * Shows the end of the output and keeps following it. Not
+     * fullScroll(FOCUS_DOWN): that also takes the focus from the input line.
+     */
     fun scrollToEnd() {
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        followOutput = true
+        scroll.post { scroll.scrollTo(0, output.bottom) }
     }
+
+    private fun atEnd() = scroll.scrollY + scroll.height - scroll.paddingBottom >=
+        output.bottom - output.lineHeight
 
     // ------------------------------------------------------------------
     // Input
@@ -193,6 +215,8 @@ class ConsoleController(
         history.add(line)
         send(line + "\n")
         markDictionaryStale()
+        scrollToEnd()
+        input.requestFocus()
     }
 
     private fun send(text: String) {
@@ -216,6 +240,7 @@ class ConsoleController(
         when (event.keyCode) {
             KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 send("\r")
+                scrollToEnd()
                 if (rawLine.isNotBlank()) history.add(rawLine.toString())
                 rawLine.setLength(0)
                 markDictionaryStale()

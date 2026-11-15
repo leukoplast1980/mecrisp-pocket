@@ -1,7 +1,7 @@
 /*
- * Mecrisp Pocket - the editor widget: CodeView (current line highlight)
- * with our own line number gutter, Forth highlighting, undo and completion
- * on top.
+ * Mecrisp Pocket - the editor widget: CodeView with our own line number
+ * gutter and current line highlight, and Forth highlighting, undo and
+ * completion on top.
  * Copyright (C) 2026 The Mecrisp Pocket authors. GPL-3.0-or-later.
  */
 package io.github.leukoplast1980.mecrisppocket.ui
@@ -10,8 +10,11 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.text.Editable
 import android.text.InputType
+import android.text.Layout
 import android.text.Selection
+import android.text.TextWatcher
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.inputmethod.EditorInfo
@@ -21,14 +24,13 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * CodeView's own line numbers are drawn into a left padding that is too
- * narrow for the numbers (they overlap the text), move away when the text
- * scrolls sideways, and reset the padding on every frame. So we draw the
- * gutter ourselves: it stays put when scrolling sideways, and the padding is
- * only changed when the number of digits changes.
+ * Long lines wrap. The gutter numbers source lines, so a wrapped line gets
+ * one number on its first row, and the current line highlight covers all
+ * rows of the cursor's source line.
  *
- * Lines never wrap (horizontal scrolling), so layout line i is source line
- * i + 1.
+ * CodeView's own line numbers are not used: they are drawn into a padding
+ * narrower than the numbers (they overlap the text), count screen rows
+ * instead of source lines, and reset the padding on every frame.
  */
 class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, attrs) {
 
@@ -39,11 +41,11 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
         typeface = Typeface.MONOSPACE
         textAlign = Paint.Align.RIGHT
     }
-    private val gutterPaint = Paint().apply { color = context.getColor(R.color.console_background) }
     private val dividerPaint = Paint().apply {
         color = context.getColor(R.color.divider)
         strokeWidth = resources.displayMetrics.density
     }
+    private val currentLinePaint = Paint().apply { color = context.getColor(R.color.current_line) }
     private val numberColor = context.getColor(R.color.label)
     private val currentNumberColor = context.getColor(R.color.console_text)
 
@@ -52,6 +54,17 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
     private var gutterRight = 0f
     private var gutterUpdatePosted = false
 
+    /** Newlines in the text, kept up to date on every change. */
+    private var newlines = 0
+
+    /**
+     * The source line number at a text offset is 1 + the newlines before it.
+     * Remember the last answer so scrolling and typing below it only count
+     * the difference instead of the whole text.
+     */
+    private var anchorOffset = 0
+    private var anchorNewlines = 0
+
     init {
         typeface = Typeface.MONOSPACE
         // No keyboard suggestions or autocorrect: they mangle Forth words.
@@ -59,13 +72,41 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
         gravity = Gravity.TOP or Gravity.START
-        setHorizontallyScrolling(true)
+        setHorizontallyScrolling(false)
         setEnableLineNumber(false)
-        setEnableHighlightCurrentLine(true)
-        setHighlightCurrentLineColor(context.getColor(R.color.current_line))
+        setEnableHighlightCurrentLine(false)
         setEnableAutoIndentation(false)
         numberPaint.textSize = textSize * 0.85f
-        updateGutter(2)
+
+        newlines = countNewlines(text, 0, text.length)
+        addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence, start: Int, count: Int, after: Int) {
+                newlines -= countNewlines(s, start, start + count)
+                // Text before the anchor changes: its count is no longer known.
+                if (start < anchorOffset) { anchorOffset = 0; anchorNewlines = 0 }
+            }
+            override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
+                newlines += countNewlines(s, start, start + count)
+            }
+            override fun afterTextChanged(s: Editable) {}
+        })
+        updateGutter(digitsFor(newlines + 1))
+    }
+
+    private fun countNewlines(s: CharSequence, from: Int, to: Int): Int {
+        var n = 0
+        for (i in from until to) if (s[i] == '\n') n++
+        return n
+    }
+
+    private fun newlinesBefore(offset: Int): Int {
+        val t = text
+        val o = offset.coerceIn(0, t.length)
+        if (anchorOffset > t.length) { anchorOffset = 0; anchorNewlines = 0 }
+        anchorNewlines += if (o >= anchorOffset) countNewlines(t, anchorOffset, o)
+        else -countNewlines(t, o, anchorOffset)
+        anchorOffset = o
+        return anchorNewlines
     }
 
     /** At least two digits, so the text does not jump between line 9 and 10. */
@@ -80,42 +121,63 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
         if (left != paddingLeft) setPadding(left, paddingTop, paddingRight, paddingBottom)
     }
 
+    private fun isFirstRow(lay: Layout, t: CharSequence, row: Int): Boolean {
+        val start = lay.getLineStart(row)
+        return start == 0 || t[start - 1] == '\n'
+    }
+
     override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val lay = layout ?: return
+        val lay = layout
+        if (lay == null) { super.onDraw(canvas); return }
+        val t = text
 
         // Changing the padding while drawing would start another layout pass
         // from inside this one; do it right after.
-        if (digitsFor(lay.lineCount) != digits && !gutterUpdatePosted) {
+        if (digitsFor(newlines + 1) != digits && !gutterUpdatePosted) {
             gutterUpdatePosted = true
             post {
                 gutterUpdatePosted = false
-                val d = digitsFor(lineCount)
+                val d = digitsFor(newlines + 1)
                 if (d != digits) updateGutter(d)
             }
         }
 
-        // The gutter is drawn in view coordinates so it stays put when the
-        // text scrolls sideways; it covers the current line highlight there.
-        val left = scrollX.toFloat()
+        // Current source line, all of its rows, under the text.
+        val cursor = Selection.getSelectionStart(t)
+        var cursorFirst = -1
+        var cursorLast = -1
+        if (cursor >= 0 && cursor <= t.length) {
+            var start = cursor
+            while (start > 0 && t[start - 1] != '\n') start--
+            var end = cursor
+            while (end < t.length && t[end] != '\n') end++
+            cursorFirst = lay.getLineForOffset(start)
+            cursorLast = lay.getLineForOffset(end)
+            val top = (lay.getLineTop(cursorFirst) + extendedPaddingTop).toFloat()
+            val bottom = (lay.getLineBottom(cursorLast) + extendedPaddingTop).toFloat()
+            canvas.drawRect(gutterRight, top, width.toFloat(), bottom, currentLinePaint)
+        }
+
+        super.onDraw(canvas)
+
         val top = scrollY.toFloat()
-        canvas.drawRect(left, top, left + gutterRight, top + height, gutterPaint)
-        canvas.drawLine(left + gutterRight, top, left + gutterRight, top + height, dividerPaint)
+        canvas.drawLine(gutterRight, top, gutterRight, top + height, dividerPaint)
 
         val contentTop = scrollY - extendedPaddingTop
         val first = lay.getLineForVertical(max(0, contentTop))
         val last = lay.getLineForVertical(contentTop + height)
-        val cursor = Selection.getSelectionStart(text)
-        val cursorLine = if (cursor >= 0) lay.getLineForOffset(cursor) else -1
-        val x = left + numbersRight
-        for (i in first..last) {
-            numberPaint.color = if (i == cursorLine) currentNumberColor else numberColor
-            canvas.drawText((i + 1).toString(), x, getLineBounds(i, null).toFloat(), numberPaint)
+        var number = newlinesBefore(lay.getLineStart(first)) + 1
+        for (row in first..last) {
+            if (!isFirstRow(lay, t, row)) continue
+            if (row != first) number++
+            numberPaint.color = if (row == cursorFirst) currentNumberColor else numberColor
+            canvas.drawText(number.toString(), numbersRight, getLineBounds(row, null).toFloat(), numberPaint)
         }
     }
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
+        invalidate()  // the current line highlight and number move along
         onCursorMoved?.invoke()
     }
 }

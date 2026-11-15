@@ -75,6 +75,27 @@ The Android app builds with `./gradlew assembleDebug` (JDK 17 and the
 Android SDK with NDK); the Gradle build assembles the core itself, so the
 RISC-V binutils must be installed.
 
+## Release builds
+
+When the repository has these four Actions secrets, every CI run also builds
+a signed release APK (artifact `mecrisp-pocket-release`), and pushing a tag
+`vX.Y.Z` publishes it as a GitHub release:
+
+| Secret | Value |
+| --- | --- |
+| `SIGNING_KEYSTORE_BASE64` | The keystore (`.jks`), base64 on one line |
+| `SIGNING_STORE_PASSWORD` | Keystore password |
+| `SIGNING_KEY_ALIAS` | Key alias |
+| `SIGNING_KEY_PASSWORD` | Key password |
+
+Create the key once with
+`keytool -genkeypair -keystore mecrisp-pocket.jks -storetype PKCS12 -alias mecrisp-pocket -keyalg RSA -keysize 4096 -validity 10000`
+and keep it safe: every update must be signed with the same key. Without the
+secrets the release APK is built unsigned (F-Droid signs its own builds).
+
+The debug build is a separate app (`….mecrisppocket.debug`, "Mecrisp Pocket
+debug"), so both can be installed at once.
+
 ## License
 
 GPL-3.0-or-later. Mecrisp-Quintus is © Matthias Koch, GPL-3.0-or-later.
