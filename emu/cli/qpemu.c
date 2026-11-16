@@ -172,6 +172,47 @@ static int print_words(void)
     return 0;
 }
 
+/* Prints the device events the board sent since the last call, one per line:
+ * "event: vibrate MS", "event: brightness N", "event: tone HZ MS WAVE VOLUME". */
+static int print_events(void)
+{
+    qp_event ev[64];
+    size_t n;
+    sleep_ms(20);  /* let pending Forth output go first */
+    while ((n = qp_poll_events(vm, ev, 64)) > 0) {
+        for (size_t k = 0; k < n; k++) {
+            switch (ev[k].type) {
+            case QP_EVENT_VIBRATE: printf("event: vibrate %d\n", ev[k].a); break;
+            case QP_EVENT_BRIGHTNESS: printf("event: brightness %d\n", ev[k].a); break;
+            case QP_EVENT_TONE:
+                printf("event: tone %d %d %d %d\n", ev[k].a, ev[k].b, ev[k].c, ev[k].d);
+                break;
+            default: printf("event: %d\n", ev[k].type); break;
+            }
+        }
+    }
+    fflush(stdout);
+    return 0;
+}
+
+/* Prints the GPIO state and the trace:
+ * "gpio: dir DIR out OUT ext EXT levels LEVELS" (hex), then
+ * "change: LEVELS TOGGLED BUSY" (hex) for each trace entry, oldest first. */
+static int print_gpio(void)
+{
+    qp_gpio_state st;
+    qp_gpio_get(vm, &st);
+    static qp_gpio_change ch[QP_GPIO_TRACE_SIZE];
+    uint64_t first;
+    size_t n = qp_gpio_trace(vm, 0, ch, QP_GPIO_TRACE_SIZE, &first);
+    sleep_ms(20);
+    printf("gpio: dir %04x out %04x ext %04x levels %04x\n", st.dir, st.out, st.ext, st.levels);
+    for (size_t k = 0; k < n; k++)
+        printf("change: %04x %04x %04x\n", ch[k].levels, ch[k].toggled, ch[k].busy);
+    fflush(stdout);
+    return 0;
+}
+
 /* Prints where the CPU is: pc and the word containing it. */
 static int print_where(void)
 {
@@ -203,7 +244,8 @@ static uint8_t *read_file(const char *path, size_t *len)
 static void usage(void)
 {
     fprintf(stderr, "usage: qpemu [--flash FILE] [--virtual-time] [--timeout MS] IMAGE"
-                    " [-e TEXT | -f FILE | --break-after MS | --reset | --safe-reset | -i]...\n");
+                    " [-e TEXT | -f FILE | --break-after MS | --reset | --safe-reset"
+                    " | --events | --gpio | --gpio-in LEVELS | -i]...\n");
     exit(1);
 }
 
@@ -271,6 +313,12 @@ int main(int argc, char **argv)
             rc = print_where();
         } else if (!strcmp(a, "--words")) {
             rc = print_words();
+        } else if (!strcmp(a, "--events")) {
+            rc = print_events();
+        } else if (!strcmp(a, "--gpio")) {
+            rc = print_gpio();
+        } else if (!strcmp(a, "--gpio-in") && i + 1 < argc) {
+            qp_gpio_set_input(vm, QP_GPIO_MASK, (uint32_t)strtoul(argv[++i], NULL, 0));
         } else if (!strcmp(a, "-i")) {
             interactive();
         } else {

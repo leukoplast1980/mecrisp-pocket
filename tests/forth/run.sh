@@ -123,5 +123,27 @@ else
     fail=$((fail + 1)); echo "FAIL load stops at the first error (exit $rc)"; printf '%s\n' "$out" | sed 's/^/     | /' | tail -10
 fi
 
+# Phone devices: the words write the registers, the board tells the phone.
+expect "vibrate"            "^event: vibrate 200$"           -e "200 vibrate" --events
+expect "brightness"         "^event: brightness 128$ && ^event: brightness -1$" -e "128 brightness 999 brightness -1 brightness" --events
+expect "brightness clamps"  "^event: brightness 255$"        -e "999 brightness" --events
+expect "tone"               "^event: tone 880 300 2 30$ && -1  ok\." -e "2 waveform 30 volume 880 300 tone tone? ." --events
+expect "silence"            "^event: tone 880 0 0 50$ && 0  ok\." -e "880 300 tone silence tone? ." --events
+expect "tone defaults"      "440 0 50  ok\."                 -e '$40090000 @ . $40090008 @ . $4009000C @ .'
+expect "tone runs out"      "0 4  ok\."                      -e "440 1 tone" --sleep 50 -e 'tone? . $40050000 @ 4 and .'
+expect "reset stops devices" "^event: tone 440 0 0 50$ && ^event: brightness -1$" -e "440 9000 tone 10 brightness" --events --reset --events
+reject "no events at power-on" "^event:"                    --events
+
+# GPIO pins
+expect "output pin"         "^0 pin@ \. -1  ok\.$"         -e "0 pin-out 0 pin-high" -e "0 pin@ ."
+expect "pin low and toggle" "0 -1  ok\."                     -e "3 pin-out 3 pin-high 3 pin-low 3 pin@ . 3 pin-toggle 3 pin@ ."
+expect "all pins"           "^gpio: dir 00ff out 00a5 ext 0000 levels 00a5$" -e '$ff $400C0000 ! $a5 pins! pins@ .' --gpio
+expect "input pins"         "^5 pin@ \. 6 pin@ \. -1 0  ok\.$" --gpio-in 0x20 -e "5 pin@ . 6 pin@ ."
+expect "pin numbers wrap"   "^gpio: dir 0002 "               -e "17 pin-out" --gpio
+expect "inputs ignore out"  "^5 pin-in 5 pin-high 5 pin@ \. 0  ok\.$" -e "5 pin-in 5 pin-high 5 pin@ ."
+expect "gpio trace"         "^change: 0001 0001 0000$ && ^change: 0000 0001 0000$" -e "0 pin-out 0 pin-high" -e "0 pin-low" --gpio
+expect "fast toggling is busy" "^change: 0001 0001 0001$"   -e ": blink 0 pin-toggle 0 pin-toggle 0 pin-toggle ; 0 pin-out blink" --gpio
+expect "reset makes pins inputs" "^gpio: dir 0000 out 0000 " -e "0 pin-out 0 pin-high" --reset --gpio
+
 echo "forth tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

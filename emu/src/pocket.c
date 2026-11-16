@@ -19,9 +19,11 @@
 
 #define BATCH        4096u
 #define RING_SIZE    65536u          /* power of two */
-#define DEV_SLOT_FIRST 0x7u          /* vibrator */
-#define DEV_SLOT_LAST  0xCu          /* GPIO */
+#define DEV_SLOT_FIRST 0xAu          /* torch (reserved) */
+#define DEV_SLOT_LAST  0xBu          /* sensors (reserved) */
 #define DEV_WORDS    64u             /* registers per generic device slot */
+#define EVENT_RING   1024u           /* power of two */
+#define TONE_EVENT_GAP_US 2000u      /* at most one tone update per 2 ms */
 #define MAX_WAIT_MS  100
 #define TAIL_SIZE    256u            /* power of two: recent output kept for qp_send_line */
 
@@ -64,6 +66,13 @@ static void ring_drop_all(struct ring *r)
                           memory_order_release);
 }
 
+/* Device events, VM thread to host: single producer, single consumer. */
+struct event_ring {
+    qp_event ev[EVENT_RING];
+    _Atomic uint32_t head;
+    _Atomic uint32_t tail;
+};
+
 struct vm_request {
     void (*fn)(qp_vm *vm, void *arg);
     void *arg;
@@ -88,6 +97,20 @@ struct qp_vm {
     uint32_t flash_addr;
     uint32_t protected_writes;
     uint32_t devregs[DEV_SLOT_LAST - DEV_SLOT_FIRST + 1][DEV_WORDS];
+
+    /* Phone devices (VM thread) */
+    uint64_t vib_end_us;          /* 0: not vibrating */
+    int32_t brightness;           /* -1: system setting */
+    uint32_t audio_freq, audio_wave, audio_volume;
+    uint64_t audio_end_us;        /* 0: silent */
+    uint64_t tone_event_us;       /* when the last tone event went out */
+    int tone_dirty;               /* a tone change still has to go out */
+    struct event_ring events;
+
+    /* GPIO (VM thread; the host goes through run_on_vm) */
+    uint32_t gpio_dir, gpio_out, gpio_ext, gpio_levels;
+    uint64_t gpio_changes;        /* trace entries ever written */
+    qp_gpio_change gpio_trace[QP_GPIO_TRACE_SIZE];
 
     struct ring rx, tx;
     _Atomic int tx_new;
@@ -155,8 +178,11 @@ static uint64_t read_cycle_cb(void *ctx)
 /* Interrupt lines                                                        */
 /* ---------------------------------------------------------------------- */
 
+static void device_timers(qp_vm *vm);
+
 static void update_mip(qp_vm *vm)
 {
+    device_timers(vm);
     uint32_t mip = 0;
     if (vm->irq_raw & vm->irq_enable) mip |= 1u << RV_IRQ_MEI;
     if (mtime_us(vm) >= vm->mtimecmp) mip |= 1u << RV_IRQ_MTI;
@@ -214,6 +240,185 @@ static void protected_write_cb(void *ctx, uint32_t addr, uint32_t pc)
     ((qp_vm *)ctx)->protected_writes++;
 }
 
+/* Phone devices ---------------------------------------------------------- */
+
+static void push_event(qp_vm *vm, int32_t type, int32_t a, int32_t b, int32_t c, int32_t d)
+{
+    struct event_ring *r = &vm->events;
+    uint32_t h = atomic_load_explicit(&r->head, memory_order_relaxed);
+    uint32_t t = atomic_load_explicit(&r->tail, memory_order_acquire);
+    if (h - t >= EVENT_RING) return;   /* host not listening: drop */
+    r->ev[h & (EVENT_RING - 1)] = (qp_event){ type, a, b, c, d };
+    atomic_store_explicit(&r->head, h + 1, memory_order_release);
+}
+
+static uint32_t ms_left(uint64_t end_us, uint64_t now)
+{
+    return end_us > now ? (uint32_t)((end_us - now + 999) / 1000) : 0;
+}
+
+static void push_tone(qp_vm *vm, uint64_t now)
+{
+    push_event(vm, QP_EVENT_TONE, (int32_t)vm->audio_freq,
+               vm->audio_end_us ? (int32_t)ms_left(vm->audio_end_us, now) : 0,
+               (int32_t)vm->audio_wave, (int32_t)vm->audio_volume);
+    vm->tone_event_us = now;
+    vm->tone_dirty = 0;
+}
+
+/* A new frequency, waveform or volume while a tone plays: tell the host,
+ * but not more often than every TONE_EVENT_GAP_US (a sweep in a loop would
+ * flood the event ring). The last change goes out from flush_tone. */
+static void tone_changed(qp_vm *vm)
+{
+    uint64_t now = mtime_us(vm);
+    if (!vm->audio_end_us || now >= vm->audio_end_us) return;
+    if (now - vm->tone_event_us >= TONE_EVENT_GAP_US) push_tone(vm, now);
+    else vm->tone_dirty = 1;
+}
+
+static void flush_tone(qp_vm *vm, int force)
+{
+    if (!vm->tone_dirty) return;
+    uint64_t now = mtime_us(vm);
+    if (!vm->audio_end_us || now >= vm->audio_end_us) { vm->tone_dirty = 0; return; }
+    if (force || now - vm->tone_event_us >= TONE_EVENT_GAP_US) push_tone(vm, now);
+}
+
+/* Called from update_mip: a tone that ran out raises the audio interrupt. */
+static void device_timers(qp_vm *vm)
+{
+    if (vm->audio_end_us && mtime_us(vm) >= vm->audio_end_us) {
+        vm->audio_end_us = 0;
+        vm->tone_dirty = 0;
+        vm->irq_raw |= QP_IRQ_AUDIO;
+    }
+}
+
+static void gpio_record(qp_vm *vm, uint32_t changed, uint32_t levels)
+{
+    uint64_t t = mtime_us(vm);
+    uint64_t tick = t - t % QP_GPIO_TICK_US;
+    if (vm->gpio_changes > 0) {
+        qp_gpio_change *e = &vm->gpio_trace[(vm->gpio_changes - 1) % QP_GPIO_TRACE_SIZE];
+        if (e->t_us == tick) {
+            e->busy |= (uint16_t)(e->toggled & changed);
+            e->toggled |= (uint16_t)changed;
+            e->levels = (uint16_t)levels;
+            return;
+        }
+    }
+    vm->gpio_trace[vm->gpio_changes % QP_GPIO_TRACE_SIZE] =
+        (qp_gpio_change){ tick, (uint16_t)levels, (uint16_t)changed, 0, 0 };
+    vm->gpio_changes++;
+}
+
+static void gpio_update(qp_vm *vm)
+{
+    uint32_t levels = ((vm->gpio_out & vm->gpio_dir) | (vm->gpio_ext & ~vm->gpio_dir)) & QP_GPIO_MASK;
+    if (levels != vm->gpio_levels) {
+        gpio_record(vm, levels ^ vm->gpio_levels, levels);
+        vm->gpio_levels = levels;
+    }
+}
+
+static uint32_t devices_read(qp_vm *vm, uint32_t slot, uint32_t off)
+{
+    switch (slot) {
+    case 0x7:   /* vibrator */
+        return off == 0 && vm->vib_end_us ? ms_left(vm->vib_end_us, mtime_us(vm)) : 0;
+    case 0x8:   /* display */
+        return off == 0 ? (uint32_t)vm->brightness : 0;
+    case 0x9:   /* audio */
+        switch (off) {
+        case 0x0: return vm->audio_freq;
+        case 0x4: return vm->audio_end_us ? ms_left(vm->audio_end_us, mtime_us(vm)) : 0;
+        case 0x8: return vm->audio_wave;
+        case 0xc: return vm->audio_volume;
+        default: return 0;
+        }
+    case 0xC:   /* GPIO */
+        switch (off) {
+        case 0x0: return vm->gpio_dir;
+        case 0x4: return vm->gpio_out;
+        case 0x8: return vm->gpio_levels;
+        default: return 0;
+        }
+    default:
+        return 0;
+    }
+}
+
+static void devices_write(qp_vm *vm, uint32_t slot, uint32_t off, uint32_t v)
+{
+    switch (slot) {
+    case 0x7:
+        if (off == 0) {
+            if (v > 60000) v = 60000;
+            vm->vib_end_us = v ? mtime_us(vm) + (uint64_t)v * 1000 : 0;
+            push_event(vm, QP_EVENT_VIBRATE, (int32_t)v, 0, 0, 0);
+        }
+        return;
+    case 0x8:
+        if (off == 0) {
+            int32_t b = (int32_t)v < 0 ? -1 : (v > 255 ? 255 : (int32_t)v);
+            vm->brightness = b;
+            push_event(vm, QP_EVENT_BRIGHTNESS, b, 0, 0, 0);
+        }
+        return;
+    case 0x9:
+        switch (off) {
+        case 0x0: vm->audio_freq = v > 20000 ? 20000 : v; tone_changed(vm); return;
+        case 0x8: vm->audio_wave = v & 3; tone_changed(vm); return;
+        case 0xc: vm->audio_volume = v > 100 ? 100 : v; tone_changed(vm); return;
+        case 0x4: {
+            uint64_t now = mtime_us(vm);
+            if (v > 3600000) v = 3600000;   /* an hour at most */
+            vm->audio_end_us = v ? now + (uint64_t)v * 1000 : 0;
+            push_tone(vm, now);
+            return;
+        }
+        default: return;
+        }
+    case 0xC:
+        switch (off) {
+        case 0x00: vm->gpio_dir = v & QP_GPIO_MASK; break;
+        case 0x04: vm->gpio_out = v & QP_GPIO_MASK; break;
+        case 0x0c: vm->gpio_out |= v & QP_GPIO_MASK; break;
+        case 0x10: vm->gpio_out &= ~v; break;
+        case 0x14: vm->gpio_out ^= v & QP_GPIO_MASK; break;
+        default: return;
+        }
+        gpio_update(vm);
+        return;
+    default:
+        return;
+    }
+}
+
+/* Reset: devices back to their power-on state; the phone stops what the
+ * board started. External input levels stay: they belong to the outside. */
+static void devices_reset(qp_vm *vm)
+{
+    uint64_t now = mtime_us(vm);
+    if (vm->vib_end_us && vm->vib_end_us > now) push_event(vm, QP_EVENT_VIBRATE, 0, 0, 0, 0);
+    if (vm->brightness != -1) push_event(vm, QP_EVENT_BRIGHTNESS, -1, 0, 0, 0);
+    vm->vib_end_us = 0;
+    vm->brightness = -1;
+    int was_playing = vm->audio_end_us && vm->audio_end_us > now;
+    vm->audio_end_us = 0;
+    vm->audio_freq = 440;
+    vm->audio_wave = QP_WAVE_SINE;
+    vm->audio_volume = 50;
+    vm->tone_dirty = 0;
+    if (was_playing) push_tone(vm, now);
+    vm->gpio_dir = 0;
+    vm->gpio_out = 0;
+    gpio_update(vm);
+}
+
+/* Board registers ---------------------------------------------------------- */
+
 static uint32_t dev_read_word(qp_vm *vm, uint32_t a)
 {
     uint32_t slot = (a >> 16) & 0xfff;
@@ -255,6 +460,8 @@ static uint32_t dev_read_word(qp_vm *vm, uint32_t a)
         default: return 0;
         }
     }
+    case 0x7: case 0x8: case 0x9: case 0xC:
+        return devices_read(vm, slot, off);
     default:
         if (slot >= DEV_SLOT_FIRST && slot <= DEV_SLOT_LAST && off / 4 < DEV_WORDS)
             return vm->devregs[slot - DEV_SLOT_FIRST][off / 4];
@@ -296,6 +503,9 @@ static void dev_write_word(qp_vm *vm, uint32_t a, uint32_t v)
         else if (off == 0xc)
             vm->mtimecmp = (vm->mtimecmp & 0xffffffffull) | ((uint64_t)v << 32);
         update_mip(vm);
+        return;
+    case 0x7: case 0x8: case 0x9: case 0xC:
+        devices_write(vm, slot, off, v);
         return;
     default:
         if (slot >= DEV_SLOT_FIRST && slot <= DEV_SLOT_LAST && off / 4 < DEV_WORDS) {
@@ -352,6 +562,7 @@ static void do_reset(qp_vm *vm, uint32_t cause, int safe)
     vm->reset_cause = cause;
     vm->safe_boot = safe ? 1u : 0u;
     memset(vm->devregs, 0, sizeof vm->devregs);
+    devices_reset(vm);
     vm->in_wfi = 0;
     ring_drop_all(&vm->rx);
     update_mip(vm);
@@ -397,6 +608,7 @@ qp_vm *qp_create(const qp_config *cfg)
     vm->cpu.counter_ctx = vm;
 
     vm->start_ns = now_ns();
+    vm->brightness = -1;   /* nothing for the phone to undo at power-on */
     do_reset(vm, QP_RESET_POWER_ON, 0);
     return vm;
 }
@@ -605,6 +817,74 @@ void qp_get_device_regs(qp_vm *vm, const uint32_t *addrs, uint32_t *values, int 
 {
     struct regs_io io = { addrs, values, count };
     run_on_vm(vm, get_regs_fn, &io);
+}
+
+size_t qp_poll_events(qp_vm *vm, qp_event *out, size_t max)
+{
+    struct event_ring *r = &vm->events;
+    uint32_t t = atomic_load_explicit(&r->tail, memory_order_relaxed);
+    uint32_t h = atomic_load_explicit(&r->head, memory_order_acquire);
+    size_t n = 0;
+    while (t != h && n < max) out[n++] = r->ev[t++ & (EVENT_RING - 1)];
+    atomic_store_explicit(&r->tail, t, memory_order_release);
+    return n;
+}
+
+static void gpio_get_fn(qp_vm *vm, void *arg)
+{
+    qp_gpio_state *st = arg;
+    st->dir = vm->gpio_dir;
+    st->out = vm->gpio_out;
+    st->ext = vm->gpio_ext;
+    st->levels = vm->gpio_levels;
+    st->now_us = mtime_us(vm);
+    st->changes = vm->gpio_changes;
+}
+
+void qp_gpio_get(qp_vm *vm, qp_gpio_state *out)
+{
+    run_on_vm(vm, gpio_get_fn, out);
+}
+
+struct gpio_input { uint32_t mask, levels; };
+
+static void gpio_set_input_fn(qp_vm *vm, void *arg)
+{
+    struct gpio_input *in = arg;
+    vm->gpio_ext = ((vm->gpio_ext & ~in->mask) | (in->levels & in->mask)) & QP_GPIO_MASK;
+    gpio_update(vm);
+}
+
+void qp_gpio_set_input(qp_vm *vm, uint32_t mask, uint32_t levels)
+{
+    struct gpio_input in = { mask, levels };
+    run_on_vm(vm, gpio_set_input_fn, &in);
+}
+
+struct gpio_trace_io { uint64_t from; qp_gpio_change *out; size_t max, n; uint64_t first; };
+
+static void gpio_trace_fn(qp_vm *vm, void *arg)
+{
+    struct gpio_trace_io *io = arg;
+    uint64_t end = vm->gpio_changes;
+    uint64_t start = io->from;
+    uint64_t oldest = end > QP_GPIO_TRACE_SIZE ? end - QP_GPIO_TRACE_SIZE : 0;
+    if (start < oldest) start = oldest;
+    if (end > start && end - start > io->max) start = end - io->max;
+    if (start > end) start = end;
+    io->first = start;
+    io->n = 0;
+    for (uint64_t i = start; i < end; i++)
+        io->out[io->n++] = vm->gpio_trace[i % QP_GPIO_TRACE_SIZE];
+}
+
+size_t qp_gpio_trace(qp_vm *vm, uint64_t from, qp_gpio_change *out, size_t max,
+                     uint64_t *first)
+{
+    struct gpio_trace_io io = { from, out, max, 0, 0 };
+    run_on_vm(vm, gpio_trace_fn, &io);
+    if (first) *first = io.first;
+    return io.n;
 }
 
 void qp_raise_irq(qp_vm *vm, uint32_t bits)
@@ -822,8 +1102,13 @@ static void wfi_wait(qp_vm *vm)
         pthread_cond_broadcast(&vm->host_cv);   /* idle waiters */
     }
 
+    flush_tone(vm, 1);
+
     int timer_armed = (vm->cpu.mie & (1u << RV_IRQ_MTI)) && vm->mtimecmp != ~0ull;
     uint64_t now = mtime_us(vm);
+    /* A tone running out raises the audio interrupt: wake up for it. */
+    int audio_armed = (vm->cpu.mie & (1u << RV_IRQ_MEI)) && (vm->irq_enable & QP_IRQ_AUDIO)
+                      && vm->audio_end_us;
 
     if (vm->cfg.virtual_time && timer_armed && vm->mtimecmp > now
         && ring_count(&vm->rx) == 0) {
@@ -837,6 +1122,10 @@ static void wfi_wait(qp_vm *vm)
     if (timer_armed && !vm->cfg.virtual_time) {
         uint64_t left = vm->mtimecmp > now ? vm->mtimecmp - now : 0;
         if (left / 1000 < (uint64_t)ms) ms = (int)(left / 1000);
+    }
+    if (audio_armed && !vm->cfg.virtual_time) {
+        uint64_t left = vm->audio_end_us > now ? vm->audio_end_us - now : 0;
+        if ((left + 999) / 1000 < (uint64_t)ms) ms = (int)((left + 999) / 1000);
     }
     if (ms > 0) {
         deadline_after_ms(&dl, ms);
@@ -862,6 +1151,7 @@ void qp_run(qp_vm *vm)
         notify_output(vm);
         if (vm->shutdown) break;
         apply_requests(vm);
+        flush_tone(vm, 0);
 
         if (vm->paused) {
             if (!vm->paused_since_ns) vm->paused_since_ns = now_ns();

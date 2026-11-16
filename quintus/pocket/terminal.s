@@ -188,3 +188,6 @@ pocket_reset: # Full software reset through the board
   li x15, 1
   sw x15, 0(x14)
   j Reset                 # Not reached on the emulator
+
+# Phone devices and GPIO pins
+.include "devices.s"

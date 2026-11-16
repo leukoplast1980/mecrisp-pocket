@@ -40,8 +40,8 @@ extern "C" {
 typedef struct qp_vm qp_vm;
 
 typedef struct {
-    /* Called on the VM thread for writes to device slots 0x4007..0x400C
-     * (vibrator, display, audio, torch, sensors, GPIO). Must not block. */
+    /* Called on the VM thread for writes to the reserved device slots
+     * 0x400A and 0x400B (torch, sensors). Must not block. */
     void (*device_write)(void *ctx, uint32_t addr, uint32_t value);
     /* Called on the VM thread when new UART output is available. Must not
      * block. May be NULL; readers can also poll qp_uart_read(). */
@@ -128,6 +128,73 @@ void qp_get_device_regs(qp_vm *vm, const uint32_t *addrs, uint32_t *values, int 
 void qp_raise_irq(qp_vm *vm, uint32_t bits);
 void qp_set_device_reg(qp_vm *vm, uint32_t addr, uint32_t value);
 uint32_t qp_get_device_reg(qp_vm *vm, uint32_t addr);
+
+/* ---------------------------------------------------------------------- */
+/* Phone devices and GPIO (docs/board.md)                                 */
+/* ---------------------------------------------------------------------- */
+
+#define QP_VIB_BASE      0x40070000u  /* +0 TIME: write n ms to vibrate (0 stops); read ms left */
+#define QP_DISP_BASE     0x40080000u  /* +0 BRIGHTNESS: 0..255, or -1 for the system setting */
+#define QP_AUDIO_BASE    0x40090000u  /* +0 FREQ (Hz), +4 TIME (write n ms to play, 0 stops;
+                                         read ms left), +8 WAVE, +C VOLUME (0..100) */
+#define QP_GPIO_BASE     0x400C0000u  /* +0 DIR (1 = output), +4 OUT, +8 IN, +C SET, +10 CLR,
+                                         +14 TOGGLE */
+#define QP_GPIO_PINS     16
+#define QP_GPIO_MASK     0xffffu
+
+#define QP_WAVE_SINE     0
+#define QP_WAVE_SQUARE   1
+#define QP_WAVE_TRIANGLE 2
+#define QP_WAVE_SAWTOOTH 3
+
+/* Things the board asks the phone to do, in order. */
+enum {
+    QP_EVENT_VIBRATE = 1,     /* a = ms; 0 stops */
+    QP_EVENT_BRIGHTNESS = 2,  /* a = 0..255, or -1 for the system setting */
+    QP_EVENT_TONE = 3,        /* a = Hz, b = ms left (0 stops), c = waveform, d = volume 0..100 */
+};
+
+typedef struct {
+    int32_t type;
+    int32_t a, b, c, d;
+} qp_event;
+
+/* Takes up to max pending events, oldest first. One consumer thread. */
+size_t qp_poll_events(qp_vm *vm, qp_event *out, size_t max);
+
+typedef struct {
+    uint32_t dir;       /* 1 = output */
+    uint32_t out;       /* output latch */
+    uint32_t ext;       /* levels driven from outside, seen on input pins */
+    uint32_t levels;    /* what IN reads: out on outputs, ext on inputs */
+    uint64_t now_us;    /* board time */
+    uint64_t changes;   /* index the next trace entry will get */
+} qp_gpio_state;
+
+void qp_gpio_get(qp_vm *vm, qp_gpio_state *out);
+
+/* Drives input pins from outside (a tap in the GPIO view, a USB breakout):
+ * the pins in mask get the levels in levels. */
+void qp_gpio_set_input(qp_vm *vm, uint32_t mask, uint32_t levels);
+
+/* The trace records pin level changes. Changes within one tick of
+ * QP_GPIO_TICK_US share an entry, so fast toggling cannot flood it. */
+#define QP_GPIO_TICK_US     100u
+#define QP_GPIO_TRACE_SIZE  65536u   /* entries kept */
+
+typedef struct {
+    uint64_t t_us;      /* start of the tick */
+    uint16_t levels;    /* levels at the end of the tick */
+    uint16_t toggled;   /* pins that changed in the tick */
+    uint16_t busy;      /* pins that changed more than once in it */
+    uint16_t pad;
+} qp_gpio_change;
+
+/* Copies trace entries from index `from` on: at most max, the newest ones,
+ * and only those still kept. *first gets the index of out[0]. The newest
+ * entry can still change while its tick lasts, so read it again next time. */
+size_t qp_gpio_trace(qp_vm *vm, uint64_t from, qp_gpio_change *out, size_t max,
+                     uint64_t *first);
 
 #ifdef __cplusplus
 }
