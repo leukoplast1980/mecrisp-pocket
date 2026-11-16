@@ -139,6 +139,7 @@ class ConsoleController(
         while (true) {
             val n = vm.read(readBuffer)
             if (n <= 0) break
+            android.util.Log.i("UiProbe", "raw " + (0 until n).joinToString(" ") { readBuffer[it].toInt().and(0xff).toString(16) })
             gotAny = true
             var off = 0
             while (off < n) {
@@ -175,6 +176,7 @@ class ConsoleController(
      * complete, Forth's messages when the line ends.
      */
     fun appendText(text: String) {
+        android.util.Log.i("UiProbe", "append [" + text.replace("\n", "\\n").replace("\r", "\\r") + "]")
         val buf = output.editableText ?: return
         var start = 0
         for (i in text.indices) {
