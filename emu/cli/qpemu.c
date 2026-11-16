@@ -197,7 +197,7 @@ static int print_events(void)
 
 /* Prints the GPIO state and the trace:
  * "gpio: dir DIR out OUT ext EXT levels LEVELS" (hex), then
- * "change: LEVELS TOGGLED BUSY" (hex) for each trace entry, oldest first. */
+ * "change: LEVELS TOGGLED BUSY BEFORE" (hex) for each trace entry, oldest first. */
 static int print_gpio(void)
 {
     qp_gpio_state st;
@@ -208,7 +208,7 @@ static int print_gpio(void)
     sleep_ms(20);
     printf("gpio: dir %04x out %04x ext %04x levels %04x\n", st.dir, st.out, st.ext, st.levels);
     for (size_t k = 0; k < n; k++)
-        printf("change: %04x %04x %04x\n", ch[k].levels, ch[k].toggled, ch[k].busy);
+        printf("change: %04x %04x %04x %04x\n", ch[k].levels, ch[k].toggled, ch[k].busy, ch[k].before);
     fflush(stdout);
     return 0;
 }

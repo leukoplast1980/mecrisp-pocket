@@ -15,8 +15,9 @@ class GpioTraceTest {
         return d
     }
 
-    private fun bits(levels: Int, toggled: Int, busy: Int = 0) =
-        levels.toLong() or (toggled.toLong() shl 16) or (busy.toLong() shl 32)
+    /** Without busy pins, the levels before are the levels with the changes undone. */
+    private fun bits(levels: Int, toggled: Int, busy: Int = 0, before: Int = levels xor toggled) =
+        levels.toLong() or (toggled.toLong() shl 16) or (busy.toLong() shl 32) or (before.toLong() shl 48)
 
     @Test fun mergeAndReadBack() {
         val t = GpioTrace(8)
@@ -55,6 +56,14 @@ class GpioTraceTest {
         assertEquals(1, t.size)
         assertEquals(900L, t.time(0))
         assertEquals(10L, t.nextRead)
+    }
+
+    @Test fun levelsBeforeABusyTick() {
+        val t = GpioTrace(8)
+        // Pin 0 went up and down again within the tick: levels 0, before 0.
+        t.merge(0, data(100L to bits(0, 1, 1, 0)), 1)
+        assertEquals(0, t.levelsBefore(0))
+        assertEquals(0, t.levelsBefore(1))
     }
 
     @Test fun findByTime() {

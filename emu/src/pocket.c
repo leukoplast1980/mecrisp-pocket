@@ -309,7 +309,8 @@ static void gpio_record(qp_vm *vm, uint32_t changed, uint32_t levels)
         }
     }
     vm->gpio_trace[vm->gpio_changes % QP_GPIO_TRACE_SIZE] =
-        (qp_gpio_change){ tick, (uint16_t)levels, (uint16_t)changed, 0, 0 };
+        (qp_gpio_change){ tick, (uint16_t)levels, (uint16_t)changed, 0,
+                          (uint16_t)(levels ^ changed) };
     vm->gpio_changes++;
 }
 

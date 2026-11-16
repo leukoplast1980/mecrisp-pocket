@@ -9,7 +9,7 @@ package io.github.leukoplast1980.mecrisppocket.gpio
 class GpioTrace(private val capacity: Int = 65536) {
 
     private val times = LongArray(capacity)
-    private val bits = LongArray(capacity)  // levels | toggled << 16 | busy << 32
+    private val bits = LongArray(capacity)  // levels | toggled << 16 | busy << 32 | before << 48
     private var head = 0                    // ring position of the oldest entry
     var size = 0
         private set
@@ -58,6 +58,9 @@ class GpioTrace(private val capacity: Int = 65536) {
     fun toggled(i: Int): Int = ((bits[(head + i) % capacity] shr 16) and 0xffff).toInt()
     fun busy(i: Int): Int = ((bits[(head + i) % capacity] shr 32) and 0xffff).toInt()
 
+    /** Pin levels at the start of entry [i]'s tick, before its changes. */
+    fun before(i: Int): Int = ((bits[(head + i) % capacity] shr 48) and 0xffff).toInt()
+
     /** Index (0 until size) of the first entry at or after [t], or size. */
     fun firstAtOrAfter(t: Long): Int {
         var lo = 0
@@ -69,10 +72,6 @@ class GpioTrace(private val capacity: Int = 65536) {
         return lo
     }
 
-    /**
-     * Pin levels just before entry [i]: the previous entry's levels, or for
-     * the oldest one its own levels with the changed pins flipped back.
-     */
-    fun levelsBefore(i: Int): Int =
-        if (i > 0) levels(i - 1) else if (size > 0) levels(0) xor toggled(0) else 0
+    /** Pin levels just before entry [i]. */
+    fun levelsBefore(i: Int): Int = if (i < size) before(i) else if (size > 0) levels(size - 1) else 0
 }

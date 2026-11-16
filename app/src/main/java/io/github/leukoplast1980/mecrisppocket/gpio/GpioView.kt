@@ -148,7 +148,7 @@ class GpioView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
                 while (m != 0) {
                     val pin = Integer.numberOfTrailingZeros(m)
                     m = m and (m - 1)
-                    val old = if (bit(cur, pin)) HIGH else LOW
+                    val old = if (bit(t.before(i), pin)) HIGH else LOW
                     mark(pin, width, from[pin], c, old)
                     val now = if (bit(t.levels(i), pin)) HIGH else LOW
                     mark(pin, width, c, c, now)

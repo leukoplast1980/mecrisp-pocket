@@ -295,7 +295,7 @@ JNIEXPORT void JNICALL FN(gpioSetInput)(JNIEnv *env, jclass cls, jlong h, jint m
 
 /* Trace entries from index `from` on. out[0] = index of the first entry
  * returned, then two longs per entry: time in us, and
- * levels | toggled << 16 | busy << 32. Returns the number of entries. */
+ * levels | toggled << 16 | busy << 32 | before << 48. Returns the number of entries. */
 JNIEXPORT jint JNICALL FN(gpioTrace)(JNIEnv *env, jclass cls, jlong h, jlong from, jlongArray out)
 {
     (void)cls;
@@ -310,7 +310,8 @@ JNIEXPORT jint JNICALL FN(gpioTrace)(JNIEnv *env, jclass cls, jlong h, jlong fro
     vals[0] = (jlong)first;
     for (size_t i = 0; i < n; i++) {
         vals[1 + i * 2] = (jlong)ch[i].t_us;
-        vals[2 + i * 2] = (jlong)ch[i].levels | ((jlong)ch[i].toggled << 16) | ((jlong)ch[i].busy << 32);
+        vals[2 + i * 2] = (jlong)ch[i].levels | ((jlong)ch[i].toggled << 16)
+                        | ((jlong)ch[i].busy << 32) | ((jlong)ch[i].before << 48);
     }
     (*env)->SetLongArrayRegion(env, out, 0, (jsize)(1 + n * 2), vals);
     free(ch);

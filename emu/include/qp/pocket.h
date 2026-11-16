@@ -187,7 +187,7 @@ typedef struct {
     uint16_t levels;    /* levels at the end of the tick */
     uint16_t toggled;   /* pins that changed in the tick */
     uint16_t busy;      /* pins that changed more than once in it */
-    uint16_t pad;
+    uint16_t before;    /* levels at the start of the tick */
 } qp_gpio_change;
 
 /* Copies trace entries from index `from` on: at most max, the newest ones,

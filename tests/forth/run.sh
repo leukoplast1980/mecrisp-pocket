@@ -141,8 +141,9 @@ expect "all pins"           "^gpio: dir 00ff out 00a5 ext 0000 levels 00a5$" -e 
 expect "input pins"         "^5 pin@ \. 6 pin@ \. -1 0  ok\.$" --gpio-in 0x20 -e "5 pin@ . 6 pin@ ."
 expect "pin numbers wrap"   "^gpio: dir 0002 "               -e "17 pin-out" --gpio
 expect "inputs ignore out"  "^5 pin-in 5 pin-high 5 pin@ \. 0  ok\.$" -e "5 pin-in 5 pin-high 5 pin@ ."
-expect "gpio trace"         "^change: 0001 0001 0000$ && ^change: 0000 0001 0000$" -e "0 pin-out 0 pin-high" -e "0 pin-low" --gpio
-expect "fast toggling is busy" "^change: 0001 0001 0001$"   -e ": blink 0 pin-toggle 0 pin-toggle 0 pin-toggle ; 0 pin-out blink" --gpio
+expect "gpio trace"         "^change: 0001 0001 0000 0000$ && ^change: 0000 0001 0000 0001$" -e "0 pin-out 0 pin-high" -e "0 pin-low" --gpio
+expect "fast toggling is busy" "^change: 0001 0001 0001 0000$" -e ": blink 0 pin-toggle 0 pin-toggle 0 pin-toggle ; 0 pin-out blink" --gpio
+expect "level before a busy tick" "^change: 0000 0001 0001 0000$" -e ": blink2 0 pin-toggle 0 pin-toggle ; 0 pin-out blink2" --gpio
 expect "reset makes pins inputs" "^gpio: dir 0000 out 0000 " -e "0 pin-out 0 pin-high" --reset --gpio
 
 echo "forth tests: $pass passed, $fail failed"

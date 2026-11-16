@@ -50,7 +50,7 @@ object NativeVm {
 
     /**
      * Trace entries from index [from] on. out[0] = index of the first entry
-     * returned, then per entry: time in µs, levels | toggled << 16 | busy << 32.
+     * returned, then per entry: time in µs, levels | toggled << 16 | busy << 32 | before << 48.
      */
     @JvmStatic external fun gpioTrace(handle: Long, from: Long, out: LongArray): Int
 }
