@@ -169,6 +169,8 @@ fi
 # The example that comes with the app loads and runs.
 EXAMPLES=$(cd "$(dirname "$0")/../../app/src/main/assets/examples" && pwd)
 expect "example lightshow.fs" "^Sweep 1 mode 0 $ && Show over\. ok\." -f "$EXAMPLES/lightshow.fs" -s lightshow --sleep 2000 -s "" --sleep 300
+expect "example pwm-ramp.fs" "^Stopped\. ok\. && ^gpio: dir 0008 out 0000 " \
+    -f "$EXAMPLES/pwm-ramp.fs" -s "3 pwm-ramp" --sleep 1500 -s "" --sleep 300 --gpio
 
 echo "forth tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
