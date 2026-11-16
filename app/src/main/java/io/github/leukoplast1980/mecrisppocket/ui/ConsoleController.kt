@@ -10,6 +10,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.text.Editable
+import android.text.Layout
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.KeyEvent
@@ -89,6 +90,10 @@ class ConsoleController(
         // which put every line break into the console twice. The console
         // needs no emoji processing.
         (output as? AppCompatTextView)?.setEmojiCompatEnabled(false)
+        // Plain line breaking: the default (high quality) weighs whole
+        // paragraphs, which gets slow on long output lines.
+        output.breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+        output.hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
 
         // New output (after layout, when its height is known) and a smaller
         // console (keyboard opening) keep the end in view while following.
@@ -191,14 +196,22 @@ class ConsoleController(
     /**
      * Appends Forth output; handles backspace (8), drops carriage returns,
      * and colours each line: the echo of a line we sent as soon as it is
-     * complete, Forth's messages when the line ends.
+     * complete, Forth's messages when the line ends. A line longer than
+     * LONG_LINE is broken: every append lays out the line it extends again,
+     * and output without line ends would make that ever slower.
      */
     fun appendText(text: String) {
         val buf = output.editableText ?: return
         var start = 0
         for (i in text.indices) {
             val c = text[i]
-            if (c != '\b' && c != '\r' && c != '\n') continue
+            if (c != '\b' && c != '\r' && c != '\n') {
+                if (buf.length + (i - start) - lineStart < LONG_LINE) continue
+                buf.append(text.substring(start, i))
+                start = i
+                endLine(buf)
+                continue
+            }
             // Whole strings, never append(text, start, end): see init.
             if (i > start) buf.append(text.substring(start, i))
             start = i + 1
@@ -207,16 +220,7 @@ class ConsoleController(
                     buf.delete(buf.length - 1, buf.length)
                     if (echoEnd > buf.length) echoEnd = -1
                 }
-                '\n' -> {
-                    matchEcho(buf, lineDone = true)
-                    val end = buf.length
-                    buf.append('\n')
-                    val line = buf.substring(lineStart, end)
-                    val from = if (echoEnd >= 0) echoEnd - lineStart else 0
-                    highlighter.applyMessages(buf, lineStart, ConsoleStyle.messages(line, from))
-                    lineStart = buf.length
-                    echoEnd = -1
-                }
+                '\n' -> endLine(buf)
             }
         }
         if (start < text.length) buf.append(text.substring(start))
@@ -228,6 +232,17 @@ class ConsoleController(
             lineStart = (lineStart - cut).coerceAtLeast(0)
             if (echoEnd >= 0) echoEnd = (echoEnd - cut).coerceAtLeast(-1)
         }
+    }
+
+    private fun endLine(buf: Editable) {
+        matchEcho(buf, lineDone = true)
+        val end = buf.length
+        buf.append('\n')
+        val line = buf.substring(lineStart, end)
+        val from = if (echoEnd >= 0) echoEnd - lineStart else 0
+        highlighter.applyMessages(buf, lineStart, ConsoleStyle.messages(line, from))
+        lineStart = buf.length
+        echoEnd = -1
     }
 
     /**
@@ -431,7 +446,8 @@ class ConsoleController(
 
     companion object {
         private const val MAX_CHARS = 100_000
-        private const val MAX_POLL_BYTES = 16 * 1024
+        private const val MAX_POLL_BYTES = 8 * 1024
+        private const val LONG_LINE = 2000
         private const val SAVED_CHARS = 20_000
         private const val MAX_EXPECTED = 64
         private const val ECHO_LOOKAHEAD = 8
