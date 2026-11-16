@@ -6,12 +6,15 @@
 package io.github.leukoplast1980.mecrisppocket.ui
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import io.github.leukoplast1980.mecrisppocket.R
 import io.github.leukoplast1980.mecrisppocket.vm.Snapshot
 import io.github.leukoplast1980.mecrisppocket.vm.VmHost
@@ -59,6 +62,15 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
             stepBaseline = HashMap(previous)
             vm.step()
             text.postDelayed({ refresh() }, 20)
+        }
+        // Not selectable text: a focused selectable TextView scrolls its
+        // cursor back into view on every refresh, so scrolling kept jumping
+        // back after a tap. A long press copies everything instead.
+        text.setOnLongClickListener {
+            activity.getSystemService(ClipboardManager::class.java)
+                ?.setPrimaryClip(ClipData.newPlainText("Mecrisp Pocket registers", text.text.toString()))
+            Toast.makeText(activity, R.string.registers_copied, Toast.LENGTH_SHORT).show()
+            true
         }
         updateButtons()
     }

@@ -281,7 +281,6 @@
                         android:layout_height="wrap_content"
                         android:fontFamily="monospace"
                         android:textColor="@color/console_text"
-                        android:textIsSelectable="true"
                         android:textSize="13sp" />
                 </ScrollView>
             </LinearLayout>

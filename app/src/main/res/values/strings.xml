@@ -17,6 +17,7 @@
     <string name="copy_all">Copy console</string>
     <string name="clear_screen">Clear console</string>
     <string name="copied">Console copied</string>
+    <string name="registers_copied">Registers copied</string>
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
     <string name="step">Step</string>

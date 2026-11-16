@@ -71,6 +71,11 @@ class ConsoleController(
         val follow = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             if (followOutput) scroll.scrollTo(0, output.bottom)
         }
+        // A tap on the output gives the focus back to the input line; a long
+        // press still selects text to copy.
+        output.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) output.post { if (!output.hasSelection()) focusInput() }
+        }
         output.addOnLayoutChangeListener(follow)
         scroll.addOnLayoutChangeListener(follow)
         scroll.setOnScrollChangeListener { _, _, _, _, _ ->
