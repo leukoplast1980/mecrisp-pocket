@@ -20,6 +20,7 @@ import android.widget.EditText
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.widget.AppCompatTextView
 import io.github.leukoplast1980.mecrisppocket.R
 import io.github.leukoplast1980.mecrisppocket.forth.ConsoleStyle
 import io.github.leukoplast1980.mecrisppocket.forth.Dictionary
@@ -81,6 +82,12 @@ class ConsoleController(
 
     init {
         output.setText("", TextView.BufferType.EDITABLE)
+        // AppCompat adds an emoji input filter to every text view. While its
+        // emoji font loads (or for good, if loading fails) the filter returns
+        // the whole source of append(text, start, end) instead of the range,
+        // which put every line break into the console twice. The console
+        // needs no emoji processing.
+        (output as? AppCompatTextView)?.setEmojiCompatEnabled(false)
 
         // New output (after layout, when its height is known) and a smaller
         // console (keyboard opening) keep the end in view while following.
@@ -180,7 +187,8 @@ class ConsoleController(
         for (i in text.indices) {
             val c = text[i]
             if (c != '\b' && c != '\r' && c != '\n') continue
-            if (i > start) buf.append(text, start, i)
+            // Whole strings, never append(text, start, end): see init.
+            if (i > start) buf.append(text.substring(start, i))
             start = i + 1
             when (c) {
                 '\b' -> if (buf.length > lineStart) {
@@ -199,7 +207,7 @@ class ConsoleController(
                 }
             }
         }
-        if (start < text.length) buf.append(text, start, text.length)
+        if (start < text.length) buf.append(text.substring(start))
         matchEcho(buf, lineDone = false)
 
         if (buf.length > MAX_CHARS) {
