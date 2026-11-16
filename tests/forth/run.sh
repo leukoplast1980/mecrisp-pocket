@@ -124,15 +124,18 @@ else
 fi
 
 # Phone devices: the words write the registers, the board tells the phone.
-expect "vibrate"            "^event: vibrate 200$"           -e "200 vibrate" --events
-expect "brightness"         "^event: brightness 128$ && ^event: brightness -1$" -e "128 brightness 999 brightness -1 brightness" --events
-expect "brightness clamps"  "^event: brightness 255$"        -e "999 brightness" --events
-expect "tone"               "^event: tone 880 300 2 30$ && -1  ok\." -e "2 waveform 30 volume 880 300 tone tone? ." --events
-expect "silence"            "^event: tone 880 0 0 50$ && 0  ok\." -e "880 300 tone silence tone? ." --events
+expect "vibrate"            "^phone: vibrate 200 \(1\) brightness -1 " -e "200 vibrate" --phone
+expect "brightness"         "^phone: .* brightness 128 "      -e "128 brightness" --phone
+expect "brightness clamps"  "^phone: .* brightness 255 "      -e "999 brightness" --phone
+expect "brightness: latest wins" "^phone: .* brightness 7 "   -e ": b 2000 0 do i 255 and brightness loop 7 brightness ; b" --phone
+expect "tone"               "^phone: .* tone 880 300 2 30 \(1\)$ && -1  ok\." -e "2 waveform 30 volume 880 300 tone tone? ." --phone
+expect "silence"            "^phone: .* tone 880 0 0 50 \(2\)$ && 0  ok\." -e "880 300 tone silence tone? ." --phone
+expect "tone sweep"         "^phone: .* tone 1000 [0-9]+ 0 50 \(101\)$" -e ': sweep 100 0 do i 10 * 10 + $40090000 ! loop ; 440 9000 tone sweep' --phone
+expect "negative is zero"   "^phone: vibrate 0 \(1\) .* tone 0 300 0 50 \(1\)$" -e "-1 vibrate -5 300 tone" --phone
 expect "tone defaults"      "440 0 50  ok\."                 -e '$40090000 @ . $40090008 @ . $4009000C @ .'
 expect "tone runs out"      "0 4  ok\."                      -e "440 1 tone" --sleep 50 -e 'tone? . $40050000 @ 4 and .'
-expect "reset stops devices" "^event: tone 440 0 0 50$ && ^event: brightness -1$" -e "440 9000 tone 10 brightness" --events --reset --events
-reject "no events at power-on" "^event:"                    --events
+expect "reset stops devices" "^phone: .* brightness -1 tone 440 0 0 50 \(2\)$" -e "440 9000 tone 10 brightness" --reset --phone
+expect "nothing at power-on" "^phone: vibrate 0 \(0\) brightness -1 tone 0 0 0 0 \(0\)$" --phone
 
 # GPIO pins
 expect "output pin"         "^0 pin@ \. -1  ok\.$"         -e "0 pin-out 0 pin-high" -e "0 pin@ ."
@@ -145,6 +148,23 @@ expect "gpio trace"         "^change: 0001 0001 0000 0000$ && ^change: 0000 0001
 expect "fast toggling is busy" "^change: 0001 0001 0001 0000$" -e ": blink 0 pin-toggle 0 pin-toggle 0 pin-toggle ; 0 pin-out blink" --gpio
 expect "level before a busy tick" "^change: 0000 0001 0001 0000$" -e ": blink2 0 pin-toggle 0 pin-toggle ; 0 pin-out blink2" --gpio
 expect "reset makes pins inputs" "^gpio: dir 0000 out 0000 " -e "0 pin-out 0 pin-high" --reset --gpio
+
+# Byte and halfword stores to device registers change only their lane.
+expect "byte store to a register lane" "^gpio: dir ffff out 0300 " -e '$ffff $400C0000 ! 3 $400C0005 c!' --gpio
+expect "byte store keeps other lanes"  "^gpio: dir ffff out 03a5 " -e '$ffff $400C0000 ! $a5 pins! 3 $400C0005 c!' --gpio
+expect "halfword to SET"   "^gpio: dir ffff out 0101 "  -e '$ffff $400C0000 ! 1 pins! $100 $400C000C h!' --gpio
+
+# Long lines: Forth takes up to 1024 characters; qpemu -f refuses longer ones.
+LONG="$WORK/long.fs"
+python3 -c "print(': long' + ' dup drop' * 110 + ' ;'); print('7 long .')" > "$LONG"
+expect "998-character line" "^7 long \. 7  ok\.$" -f "$LONG"
+python3 -c "print(': toolong' + ' dup drop' * 130 + ' ;')" > "$LONG"
+out=$(timeout 20 "$QPEMU" --flash "$FLASH" --timeout 3000 "$IMAGE" -f "$LONG" </dev/null 2>&1); rc=$?
+if [ $rc -eq 3 ] && printf '%s\n' "$out" | grep -q "long.fs:1: longer than 1024 bytes"; then
+    pass=$((pass + 1)); echo "ok   line over 1024 is refused"
+else
+    fail=$((fail + 1)); echo "FAIL line over 1024 is refused (exit $rc)"; printf '%s\n' "$out" | tail -5
+fi
 
 # The example that comes with the app loads and runs.
 EXAMPLES=$(cd "$(dirname "$0")/../../app/src/main/assets/examples" && pwd)

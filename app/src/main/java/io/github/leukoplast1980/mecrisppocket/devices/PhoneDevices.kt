@@ -1,6 +1,7 @@
 /*
  * Mecrisp Pocket - carries out what the board asks of the phone: vibration,
- * screen brightness and tones (see docs/board.md).
+ * screen brightness and tones (see docs/board.md). The board keeps these as
+ * state; this polls it and acts on what changed.
  * Copyright (C) 2026 The Mecrisp Pocket authors. GPL-3.0-or-later.
  */
 package io.github.leukoplast1980.mecrisppocket.devices
@@ -17,31 +18,37 @@ import io.github.leukoplast1980.mecrisppocket.vm.VmHost
 
 class PhoneDevices(private val activity: Activity, private val vm: VmHost) {
 
-    private val events = IntArray(MAX_EVENTS * 5)
+    private val state = IntArray(8)
     private val tone = ToneOutput()
 
     private val vibrator: Vibrator? =
         if (Build.VERSION.SDK_INT >= 31) activity.getSystemService(VibratorManager::class.java)?.defaultVibrator
         else activity.getSystemService(Vibrator::class.java)
 
-    /** Handles the events the board sent since the last call. UI thread. */
-    fun poll() {
-        while (true) {
-            val n = vm.pollEvents(events)
-            for (i in 0 until n) {
-                val o = i * 5
-                handle(events[o], events[o + 1], events[o + 2], events[o + 3], events[o + 4])
-            }
-            if (n < MAX_EVENTS) return
-        }
-    }
+    // What was carried out last. Until the first poll nothing is known: then
+    // the brightness is applied (a new window needs it again), but an old
+    // vibration or tone is not replayed.
+    private var primed = false
+    private var vibrateSeq = 0
+    private var toneSeq = 0
+    private var brightness = Int.MIN_VALUE
 
-    private fun handle(type: Int, a: Int, b: Int, c: Int, d: Int) {
-        when (type) {
-            VIBRATE -> vibrate(a)
-            BRIGHTNESS -> setBrightness(a)
-            TONE -> tone.play(a, b, c, d)
+    /**
+     * Carries out what changed since the last call. UI thread. The board
+     * keeps only the latest state, so a program that changes things faster
+     * than this runs cannot leave the phone behind.
+     */
+    fun poll() {
+        vm.phoneState(state)
+        if (state[2] != brightness) {
+            brightness = state[2]
+            setBrightness(brightness)
         }
+        if (primed && state[0] != vibrateSeq) vibrate(state[1])
+        if (primed && state[3] != toneSeq) tone.play(state[4], state[5], state[6], state[7])
+        vibrateSeq = state[0]
+        toneSeq = state[3]
+        primed = true
     }
 
     /**
@@ -84,12 +91,7 @@ class PhoneDevices(private val activity: Activity, private val vm: VmHost) {
         vibrator?.cancel()
     }
 
-    companion object {
-        // Event types, as in emu/include/qp/pocket.h
-        const val VIBRATE = 1
-        const val BRIGHTNESS = 2
-        const val TONE = 3
-        private const val MAX_EVENTS = 64
-        private const val MIN_BRIGHTNESS = 0.02f
+    private companion object {
+        const val MIN_BRIGHTNESS = 0.02f
     }
 }

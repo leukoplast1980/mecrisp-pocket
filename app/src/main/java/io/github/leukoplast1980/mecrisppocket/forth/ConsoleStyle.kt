@@ -58,11 +58,15 @@ object ConsoleStyle {
 
     /**
      * True if [text] (a console line so far, from its start) begins with the
-     * echo of [sent]: the line itself and the space Forth prints for Enter.
+     * echo of [sent]: the line itself, with tabs echoed as spaces, and the
+     * space Forth prints for Enter.
      */
     fun startsWithEcho(text: CharSequence, sent: String): Boolean {
         if (text.length < sent.length + 1) return false
-        for (i in sent.indices) if (text[i] != sent[i]) return false
+        for (i in sent.indices) {
+            val c = if (sent[i] == '\t') ' ' else sent[i]
+            if (text[i] != c) return false
+        }
         return text[sent.length] == ' '
     }
 }

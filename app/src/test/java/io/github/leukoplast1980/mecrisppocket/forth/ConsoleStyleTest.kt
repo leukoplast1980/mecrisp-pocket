@@ -48,5 +48,6 @@ class ConsoleStyleTest {
         assertFalse(ConsoleStyle.startsWithEcho("2 3 + ", "2 3 +."))
         assertFalse(ConsoleStyle.startsWithEcho("12 ok.", "1"))
         assertFalse(ConsoleStyle.startsWithEcho("2 3", "2 3"))  // no space yet: not sure
+        assertTrue(ConsoleStyle.startsWithEcho(" dup .  ok.", "\tdup ."))  // Forth echoes a tab as a space
     }
 }

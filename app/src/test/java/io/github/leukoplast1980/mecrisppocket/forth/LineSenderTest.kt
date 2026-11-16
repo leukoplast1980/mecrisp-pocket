@@ -24,13 +24,13 @@ class LineSenderTest {
         val r = LineSender { sent.add(it); if (it == "bad") LineResult.ERROR else LineResult.OK }
             .run(LineSender.lines("ok1\nbad\nnever", "f.fs", firstLine = 10))
         assertEquals(listOf("ok1", "bad"), sent)
-        assertTrue(r is SendResult.Failed && !r.timeout && r.line.number == 11 && r.line.file == "f.fs")
+        assertTrue(r is SendResult.Failed && r.reason == LineResult.ERROR && r.line.number == 11 && r.line.file == "f.fs")
     }
 
     @Test
     fun reportsTimeouts() {
         val r = LineSender { LineResult.TIMEOUT }.run(LineSender.lines("spin", "x"))
-        assertTrue(r is SendResult.Failed && r.timeout)
+        assertTrue(r is SendResult.Failed && r.reason == LineResult.TIMEOUT)
     }
 
     @Test

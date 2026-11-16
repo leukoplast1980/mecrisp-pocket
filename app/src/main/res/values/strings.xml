@@ -81,6 +81,8 @@
     <string name="sent_lines">Sent %1$d lines</string>
     <string name="send_error">%1$s:%2$d: Forth reported an error, sending stopped</string>
     <string name="send_timeout">%1$s:%2$d: still running after 10 s, sending stopped</string>
+    <string name="send_too_long">%1$s:%2$d: line longer than %3$d characters, not sent</string>
+    <string name="line_too_long">Line too long: %1$d characters, Forth takes up to %2$d</string>
     <string name="find_next">Next</string>
     <string name="replace">Replace</string>
     <string name="replace_all">All</string>

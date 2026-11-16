@@ -23,12 +23,6 @@ JNIEXPORT jlong JNICALL FN(create)(JNIEnv *env, jclass cls, jboolean virtual_tim
     return (jlong)(intptr_t)qp_create(&cfg);
 }
 
-JNIEXPORT void JNICALL FN(destroy)(JNIEnv *env, jclass cls, jlong h)
-{
-    (void)env; (void)cls;
-    qp_destroy(VM(h));
-}
-
 JNIEXPORT void JNICALL FN(loadFlash)(JNIEnv *env, jclass cls, jlong h, jbyteArray image)
 {
     (void)cls;
@@ -236,7 +230,8 @@ JNIEXPORT jobjectArray JNICALL FN(dictionary)(JNIEnv *env, jclass cls, jlong h, 
     return out;
 }
 
-/* Sends one line and waits for Forth: 0 ok, 1 error, 2 timeout. Blocks:
+/* Sends one line and waits for Forth: 0 ok, 1 error, 2 timeout, 3 too long
+ * (not sent). Blocks:
  * call off the UI thread. */
 JNIEXPORT jint JNICALL FN(sendLine)(JNIEnv *env, jclass cls, jlong h, jbyteArray line, jint timeout_ms)
 {
@@ -251,28 +246,16 @@ JNIEXPORT jint JNICALL FN(sendLine)(JNIEnv *env, jclass cls, jlong h, jbyteArray
 
 /* Phone devices ----------------------------------------------------------- */
 
-/* Fills out with up to out.length / 5 events (type, a, b, c, d each);
- * returns how many. */
-JNIEXPORT jint JNICALL FN(pollEvents)(JNIEnv *env, jclass cls, jlong h, jintArray out)
+/* out (8 ints): vibrate seq, vibrate ms, brightness, tone seq, tone Hz,
+ * tone ms left, waveform, volume. Lock-free for the board: polled often. */
+JNIEXPORT void JNICALL FN(phoneState)(JNIEnv *env, jclass cls, jlong h, jintArray out)
 {
     (void)cls;
-    jsize len = (*env)->GetArrayLength(env, out);
-    size_t max = (size_t)len / 5;
-    if (max == 0) return 0;
-    qp_event ev[64];
-    if (max > 64) max = 64;
-    size_t n = qp_poll_events(VM(h), ev, max);
-    if (n == 0) return 0;
-    jint vals[64 * 5];
-    for (size_t i = 0; i < n; i++) {
-        vals[i * 5 + 0] = ev[i].type;
-        vals[i * 5 + 1] = ev[i].a;
-        vals[i * 5 + 2] = ev[i].b;
-        vals[i * 5 + 3] = ev[i].c;
-        vals[i * 5 + 4] = ev[i].d;
-    }
-    (*env)->SetIntArrayRegion(env, out, 0, (jsize)(n * 5), vals);
-    return (jint)n;
+    qp_phone p;
+    qp_phone_get(VM(h), &p);
+    jint v[8] = { (jint)p.vibrate_seq, p.vibrate_ms, p.brightness, (jint)p.tone_seq,
+                  p.tone_hz, p.tone_ms, p.tone_wave, p.tone_volume };
+    (*env)->SetIntArrayRegion(env, out, 0, 8, v);
 }
 
 /* GPIO -------------------------------------------------------------------- */

@@ -40,13 +40,6 @@ extern "C" {
 typedef struct qp_vm qp_vm;
 
 typedef struct {
-    /* Called on the VM thread for writes to the reserved device slots
-     * 0x400A and 0x400B (torch, sensors). Must not block. */
-    void (*device_write)(void *ctx, uint32_t addr, uint32_t value);
-    /* Called on the VM thread when new UART output is available. Must not
-     * block. May be NULL; readers can also poll qp_uart_read(). */
-    void (*uart_output)(void *ctx);
-    void *ctx;
     /* Nonzero: time and cycle counters follow the instruction count
      * (reproducible test runs). Zero: real time. */
     int virtual_time;
@@ -105,6 +98,11 @@ int qp_wait_idle(qp_vm *vm, int timeout_ms);
 #define QP_LINE_OK      0   /* Forth answered " ok." */
 #define QP_LINE_ERROR   1   /* Forth printed an error instead */
 #define QP_LINE_TIMEOUT 2   /* Forth did not return to the prompt in time */
+#define QP_LINE_TOO_LONG 3  /* longer than QP_MAX_LINE bytes: not sent */
+
+/* Forth's input buffer (tiblength in quintus/pocket): a longer line would
+ * be cut off without an error. */
+#define QP_MAX_LINE 1024
 
 /* Sends one line of source (without line end) and waits until Forth is
  * idle again, then checks whether its output for this line ended with
@@ -116,18 +114,14 @@ int qp_send_line(qp_vm *vm, const char *line, size_t len, int timeout_ms);
 size_t qp_read_memory(qp_vm *vm, uint32_t addr, uint8_t *buf, size_t len);
 void qp_snapshot_get(qp_vm *vm, qp_snapshot *out);
 
-/* Runs fn on the VM thread with direct read access to flash and RAM. */
+/* Runs fn on the VM thread with direct read access to flash and RAM
+ * (used by the dictionary reader in dict.c). */
 void qp_with_memory(qp_vm *vm,
                     void (*fn)(const uint8_t *flash, const uint8_t *ram, void *arg),
                     void *arg);
 
 /* Reads several device registers at once, without side effects. */
 void qp_get_device_regs(qp_vm *vm, const uint32_t *addrs, uint32_t *values, int count);
-
-/* Device inputs from the host side. */
-void qp_raise_irq(qp_vm *vm, uint32_t bits);
-void qp_set_device_reg(qp_vm *vm, uint32_t addr, uint32_t value);
-uint32_t qp_get_device_reg(qp_vm *vm, uint32_t addr);
 
 /* ---------------------------------------------------------------------- */
 /* Phone devices and GPIO (docs/board.md)                                 */
@@ -147,20 +141,23 @@ uint32_t qp_get_device_reg(qp_vm *vm, uint32_t addr);
 #define QP_WAVE_TRIANGLE 2
 #define QP_WAVE_SAWTOOTH 3
 
-/* Things the board asks the phone to do, in order. */
-enum {
-    QP_EVENT_VIBRATE = 1,     /* a = ms; 0 stops */
-    QP_EVENT_BRIGHTNESS = 2,  /* a = 0..255, or -1 for the system setting */
-    QP_EVENT_TONE = 3,        /* a = Hz, b = ms left (0 stops), c = waveform, d = volume 0..100 */
-};
-
+/* What the board asks of the phone, as its current state. The phone polls
+ * it and acts on what changed: a new vibrate_seq or tone_seq, or a new
+ * brightness. Only the latest state counts, so nothing can pile up. */
 typedef struct {
-    int32_t type;
-    int32_t a, b, c, d;
-} qp_event;
+    uint32_t vibrate_seq;   /* +1 on every write to VIB TIME */
+    int32_t vibrate_ms;     /* as written: 0 stops */
+    int32_t brightness;     /* 0..255, or -1 for the system setting */
+    uint32_t tone_seq;      /* +1 when a tone starts or stops, and when its
+                               frequency, waveform or volume change */
+    int32_t tone_hz;
+    int32_t tone_ms;        /* ms left at that moment; 0: silent */
+    int32_t tone_wave;
+    int32_t tone_volume;
+} qp_phone;
 
-/* Takes up to max pending events, oldest first. One consumer thread. */
-size_t qp_poll_events(qp_vm *vm, qp_event *out, size_t max);
+/* Any thread; does not wake the board. */
+void qp_phone_get(qp_vm *vm, qp_phone *out);
 
 typedef struct {
     uint32_t dir;       /* 1 = output */

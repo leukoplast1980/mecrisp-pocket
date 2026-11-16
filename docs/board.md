@@ -33,6 +33,9 @@ through the flash write port, so a runaway program cannot damage saved words.
 
 ## Devices
 
+All registers are 32 bits wide. A byte or halfword store (`c!`, `h!`) changes
+only its own part of the register.
+
 | Address | Register | Access | Meaning |
 | --- | --- | --- | --- |
 | `0x4001_0000` | UART DATA | R/W | Read: next received byte. Write: send a byte. |
@@ -78,6 +81,10 @@ frequency, waveform or volume while a tone plays changes the playing tone,
 so a loop can sweep it. Reset stops vibration and the tone and restores the
 brightness.
 
+The phone polls this as state, so only the latest value counts: a program
+that sets the brightness thousands of times a second cannot leave the
+screen behind. Negative times, frequencies and volumes count as 0.
+
 There are 16 GPIO pins, 0..15. Input pins read what the outside drives on
 them: in the app, a tap on the pin in the GPIO view; later a USB breakout.
 Reset makes all pins inputs and clears OUT.
@@ -115,3 +122,4 @@ Words for all of this are in the core (so `eraseflash` keeps them):
   `eraseflashfrom ( addr -- )` erases from `addr` on.
 - `key` sleeps with `wfi` while no input is waiting, unless a multitasker has
   replaced `hook-pause`.
+- An input line can be up to 1024 characters long (the core's default is 200).

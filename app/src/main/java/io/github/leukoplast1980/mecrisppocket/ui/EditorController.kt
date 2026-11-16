@@ -34,9 +34,11 @@ import io.github.leukoplast1980.mecrisppocket.files.SessionStore
 import io.github.leukoplast1980.mecrisppocket.forth.Dictionary
 import io.github.leukoplast1980.mecrisppocket.forth.ForthLexer
 import io.github.leukoplast1980.mecrisppocket.forth.LexResult
+import io.github.leukoplast1980.mecrisppocket.forth.LineResult
 import io.github.leukoplast1980.mecrisppocket.forth.LineSender
 import io.github.leukoplast1980.mecrisppocket.forth.SendResult
 import io.github.leukoplast1980.mecrisppocket.vm.VmHost
+import java.util.concurrent.Executors
 
 class EditorController(
     private val activity: AppCompatActivity,
@@ -72,6 +74,9 @@ class EditorController(
     private var lex = LexResult(emptyList(), emptySet(), emptyList())
 
     @Volatile private var sending: LineSender? = null
+
+    /** File writes, one after another: two quick saves must not finish out of order. */
+    private val writer = Executors.newSingleThreadExecutor()
 
     private val highlightRunnable = Runnable { highlightNow() }
 
@@ -336,7 +341,7 @@ class EditorController(
         val uri = d.uri
         d.dirty = false
         rebuildTabs()
-        Thread {
+        writer.execute {
             try {
                 folder.write(uri, text)
                 if (announce) toast(activity.getString(R.string.saved, d.name))
@@ -344,7 +349,7 @@ class EditorController(
                 activity.runOnUiThread { d.dirty = true; rebuildTabs() }
                 toast(activity.getString(R.string.cannot_save, d.name))
             }
-        }.start()
+        }
     }
 
     // ------------------------------------------------------------------
@@ -502,8 +507,14 @@ class EditorController(
             }
             is SendResult.Failed -> {
                 if (d === current()) highlighter.markErrorLine(editor.text, result.line.number)
-                val msg = if (result.timeout) R.string.send_timeout else R.string.send_error
-                toast(activity.getString(msg, result.line.file, result.line.number))
+                val msg = when (result.reason) {
+                    LineResult.TIMEOUT -> activity.getString(R.string.send_timeout, result.line.file, result.line.number)
+                    LineResult.TOO_LONG -> activity.getString(
+                        R.string.send_too_long, result.line.file, result.line.number, VmHost.MAX_LINE_BYTES,
+                    )
+                    else -> activity.getString(R.string.send_error, result.line.file, result.line.number)
+                }
+                toast(msg)
             }
             SendResult.Cancelled -> Unit
         }
@@ -577,17 +588,16 @@ class EditorController(
         findNext(query)
     }
 
+    /** One edit for all replacements, so one Undo takes them all back. */
     private fun replaceAll(query: String, replacement: String) {
         if (query.isEmpty()) return
-        val t = editor.text
-        var count = 0
-        var from = 0
-        while (true) {
-            val i = t.toString().indexOf(query, from, ignoreCase = true)
-            if (i < 0) break
-            t.replace(i, i + query.length, replacement)
-            from = i + replacement.length
-            count++
+        val old = editor.text.toString()
+        val pattern = Regex(Regex.escape(query), RegexOption.IGNORE_CASE)
+        val count = pattern.findAll(old).count()
+        if (count > 0) {
+            val cursor = editor.selectionStart
+            editor.text.replace(0, old.length, pattern.replace(old, Regex.escapeReplacement(replacement)))
+            editor.setSelection(cursor.coerceIn(0, editor.text.length))
         }
         toast(activity.getString(R.string.replaced, count))
     }

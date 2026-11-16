@@ -19,11 +19,6 @@
 
 #define BATCH        4096u
 #define RING_SIZE    65536u          /* power of two */
-#define DEV_SLOT_FIRST 0xAu          /* torch (reserved) */
-#define DEV_SLOT_LAST  0xBu          /* sensors (reserved) */
-#define DEV_WORDS    64u             /* registers per generic device slot */
-#define EVENT_RING   1024u           /* power of two */
-#define TONE_EVENT_GAP_US 2000u      /* at most one tone update per 2 ms */
 #define MAX_WAIT_MS  100
 #define TAIL_SIZE    256u            /* power of two: recent output kept for qp_send_line */
 
@@ -66,13 +61,6 @@ static void ring_drop_all(struct ring *r)
                           memory_order_release);
 }
 
-/* Device events, VM thread to host: single producer, single consumer. */
-struct event_ring {
-    qp_event ev[EVENT_RING];
-    _Atomic uint32_t head;
-    _Atomic uint32_t tail;
-};
-
 struct vm_request {
     void (*fn)(qp_vm *vm, void *arg);
     void *arg;
@@ -96,16 +84,16 @@ struct qp_vm {
     uint32_t reset_cause, safe_boot;
     uint32_t flash_addr;
     uint32_t protected_writes;
-    uint32_t devregs[DEV_SLOT_LAST - DEV_SLOT_FIRST + 1][DEV_WORDS];
 
     /* Phone devices (VM thread) */
     uint64_t vib_end_us;          /* 0: not vibrating */
     int32_t brightness;           /* -1: system setting */
     uint32_t audio_freq, audio_wave, audio_volume;
     uint64_t audio_end_us;        /* 0: silent */
-    uint64_t tone_event_us;       /* when the last tone event went out */
-    int tone_dirty;               /* a tone change still has to go out */
-    struct event_ring events;
+
+    /* What the phone should do; written by the VM thread, read by the host. */
+    pthread_mutex_t phone_lock;
+    qp_phone phone;
 
     /* GPIO (VM thread; the host goes through run_on_vm) */
     uint32_t gpio_dir, gpio_out, gpio_ext, gpio_levels;
@@ -132,7 +120,6 @@ struct qp_vm {
     _Atomic int break_req;
     _Atomic int reset_req;        /* 0 none, else cause + 1 */
     _Atomic int reset_safe;
-    _Atomic uint32_t raise_bits;
 
     struct vm_request *request;   /* single pending request slot */
     uint64_t request_seq, request_done_seq;
@@ -242,47 +229,51 @@ static void protected_write_cb(void *ctx, uint32_t addr, uint32_t pc)
 
 /* Phone devices ---------------------------------------------------------- */
 
-static void push_event(qp_vm *vm, int32_t type, int32_t a, int32_t b, int32_t c, int32_t d)
-{
-    struct event_ring *r = &vm->events;
-    uint32_t h = atomic_load_explicit(&r->head, memory_order_relaxed);
-    uint32_t t = atomic_load_explicit(&r->tail, memory_order_acquire);
-    if (h - t >= EVENT_RING) return;   /* host not listening: drop */
-    r->ev[h & (EVENT_RING - 1)] = (qp_event){ type, a, b, c, d };
-    atomic_store_explicit(&r->head, h + 1, memory_order_release);
-}
-
 static uint32_t ms_left(uint64_t end_us, uint64_t now)
 {
     return end_us > now ? (uint32_t)((end_us - now + 999) / 1000) : 0;
 }
 
-static void push_tone(qp_vm *vm, uint64_t now)
+/* Register values are unsigned; for the phone devices a negative number
+ * means nothing (0), not a huge one. */
+static uint32_t at_most(uint32_t v, uint32_t max)
 {
-    push_event(vm, QP_EVENT_TONE, (int32_t)vm->audio_freq,
-               vm->audio_end_us ? (int32_t)ms_left(vm->audio_end_us, now) : 0,
-               (int32_t)vm->audio_wave, (int32_t)vm->audio_volume);
-    vm->tone_event_us = now;
-    vm->tone_dirty = 0;
+    if ((int32_t)v < 0) return 0;
+    return v > max ? max : v;
 }
 
-/* A new frequency, waveform or volume while a tone plays: tell the host,
- * but not more often than every TONE_EVENT_GAP_US (a sweep in a loop would
- * flood the event ring). The last change goes out from flush_tone. */
+/* The phone reads these with qp_phone_get from its own thread. */
+static void phone_vibrate(qp_vm *vm, uint32_t ms)
+{
+    pthread_mutex_lock(&vm->phone_lock);
+    vm->phone.vibrate_seq++;
+    vm->phone.vibrate_ms = (int32_t)ms;
+    pthread_mutex_unlock(&vm->phone_lock);
+}
+
+static void phone_brightness(qp_vm *vm, int32_t b)
+{
+    pthread_mutex_lock(&vm->phone_lock);
+    vm->phone.brightness = b;
+    pthread_mutex_unlock(&vm->phone_lock);
+}
+
+static void phone_tone(qp_vm *vm, uint64_t now)
+{
+    pthread_mutex_lock(&vm->phone_lock);
+    vm->phone.tone_seq++;
+    vm->phone.tone_hz = (int32_t)vm->audio_freq;
+    vm->phone.tone_ms = vm->audio_end_us ? (int32_t)ms_left(vm->audio_end_us, now) : 0;
+    vm->phone.tone_wave = (int32_t)vm->audio_wave;
+    vm->phone.tone_volume = (int32_t)vm->audio_volume;
+    pthread_mutex_unlock(&vm->phone_lock);
+}
+
+/* A new frequency, waveform or volume while a tone plays changes it. */
 static void tone_changed(qp_vm *vm)
 {
     uint64_t now = mtime_us(vm);
-    if (!vm->audio_end_us || now >= vm->audio_end_us) return;
-    if (now - vm->tone_event_us >= TONE_EVENT_GAP_US) push_tone(vm, now);
-    else vm->tone_dirty = 1;
-}
-
-static void flush_tone(qp_vm *vm, int force)
-{
-    if (!vm->tone_dirty) return;
-    uint64_t now = mtime_us(vm);
-    if (!vm->audio_end_us || now >= vm->audio_end_us) { vm->tone_dirty = 0; return; }
-    if (force || now - vm->tone_event_us >= TONE_EVENT_GAP_US) push_tone(vm, now);
+    if (vm->audio_end_us && now < vm->audio_end_us) phone_tone(vm, now);
 }
 
 /* Called from update_mip: a tone that ran out raises the audio interrupt. */
@@ -290,7 +281,6 @@ static void device_timers(qp_vm *vm)
 {
     if (vm->audio_end_us && mtime_us(vm) >= vm->audio_end_us) {
         vm->audio_end_us = 0;
-        vm->tone_dirty = 0;
         vm->irq_raw |= QP_IRQ_AUDIO;
     }
 }
@@ -355,28 +345,28 @@ static void devices_write(qp_vm *vm, uint32_t slot, uint32_t off, uint32_t v)
     switch (slot) {
     case 0x7:
         if (off == 0) {
-            if (v > 60000) v = 60000;
+            v = at_most(v, 60000);
             vm->vib_end_us = v ? mtime_us(vm) + (uint64_t)v * 1000 : 0;
-            push_event(vm, QP_EVENT_VIBRATE, (int32_t)v, 0, 0, 0);
+            phone_vibrate(vm, v);
         }
         return;
     case 0x8:
         if (off == 0) {
             int32_t b = (int32_t)v < 0 ? -1 : (v > 255 ? 255 : (int32_t)v);
             vm->brightness = b;
-            push_event(vm, QP_EVENT_BRIGHTNESS, b, 0, 0, 0);
+            phone_brightness(vm, b);
         }
         return;
     case 0x9:
         switch (off) {
-        case 0x0: vm->audio_freq = v > 20000 ? 20000 : v; tone_changed(vm); return;
+        case 0x0: vm->audio_freq = at_most(v, 20000); tone_changed(vm); return;
         case 0x8: vm->audio_wave = v & 3; tone_changed(vm); return;
-        case 0xc: vm->audio_volume = v > 100 ? 100 : v; tone_changed(vm); return;
+        case 0xc: vm->audio_volume = at_most(v, 100); tone_changed(vm); return;
         case 0x4: {
             uint64_t now = mtime_us(vm);
-            if (v > 3600000) v = 3600000;   /* an hour at most */
+            v = at_most(v, 3600000);   /* an hour at most */
             vm->audio_end_us = v ? now + (uint64_t)v * 1000 : 0;
-            push_tone(vm, now);
+            phone_tone(vm, now);
             return;
         }
         default: return;
@@ -402,17 +392,16 @@ static void devices_write(qp_vm *vm, uint32_t slot, uint32_t off, uint32_t v)
 static void devices_reset(qp_vm *vm)
 {
     uint64_t now = mtime_us(vm);
-    if (vm->vib_end_us && vm->vib_end_us > now) push_event(vm, QP_EVENT_VIBRATE, 0, 0, 0, 0);
-    if (vm->brightness != -1) push_event(vm, QP_EVENT_BRIGHTNESS, -1, 0, 0, 0);
+    if (vm->vib_end_us && vm->vib_end_us > now) phone_vibrate(vm, 0);
     vm->vib_end_us = 0;
     vm->brightness = -1;
+    phone_brightness(vm, -1);
     int was_playing = vm->audio_end_us && vm->audio_end_us > now;
     vm->audio_end_us = 0;
     vm->audio_freq = 440;
     vm->audio_wave = QP_WAVE_SINE;
     vm->audio_volume = 50;
-    vm->tone_dirty = 0;
-    if (was_playing) push_tone(vm, now);
+    if (was_playing) phone_tone(vm, now);
     vm->gpio_dir = 0;
     vm->gpio_out = 0;
     gpio_update(vm);
@@ -463,9 +452,7 @@ static uint32_t dev_read_word(qp_vm *vm, uint32_t a)
     }
     case 0x7: case 0x8: case 0x9: case 0xC:
         return devices_read(vm, slot, off);
-    default:
-        if (slot >= DEV_SLOT_FIRST && slot <= DEV_SLOT_LAST && off / 4 < DEV_WORDS)
-            return vm->devregs[slot - DEV_SLOT_FIRST][off / 4];
+    default:   /* torch and sensors (reserved), unused slots */
         return 0;
     }
 }
@@ -509,11 +496,6 @@ static void dev_write_word(qp_vm *vm, uint32_t a, uint32_t v)
         devices_write(vm, slot, off, v);
         return;
     default:
-        if (slot >= DEV_SLOT_FIRST && slot <= DEV_SLOT_LAST && off / 4 < DEV_WORDS) {
-            vm->devregs[slot - DEV_SLOT_FIRST][off / 4] = v;
-            if (vm->cfg.device_write)
-                vm->cfg.device_write(vm->cfg.ctx, a & ~3u, v);
-        }
         return;
     }
 }
@@ -541,11 +523,19 @@ static int mmio_read(void *ctx, uint32_t a, int size, uint32_t *v)
     return 0;
 }
 
+/* Device registers are 32 bits wide. A byte or halfword store changes its
+ * own lane: write-only registers (SET, CLR, the UART, ...) read as 0, so
+ * they get just that lane; the others keep their other lanes. */
 static int mmio_write(void *ctx, uint32_t a, int size, uint32_t v)
 {
-    (void)size;
     if (!in_device_space(a)) return 1;
-    dev_write_word(ctx, a, v);
+    if (size < 4) {
+        uint32_t shift = (a & 3u) * 8u;
+        uint32_t mask = (size == 1 ? 0xffu : 0xffffu) << shift;
+        uint32_t old = dev_read_word_peek(ctx, a & ~3u);
+        v = (old & ~mask) | ((v << shift) & mask);
+    }
+    dev_write_word(ctx, a & ~3u, v);
     return 0;
 }
 
@@ -562,7 +552,6 @@ static void do_reset(qp_vm *vm, uint32_t cause, int safe)
     vm->mtimecmp = ~0ull;
     vm->reset_cause = cause;
     vm->safe_boot = safe ? 1u : 0u;
-    memset(vm->devregs, 0, sizeof vm->devregs);
     devices_reset(vm);
     vm->in_wfi = 0;
     ring_drop_all(&vm->rx);
@@ -580,6 +569,7 @@ qp_vm *qp_create(const qp_config *cfg)
     if (cfg) vm->cfg = *cfg;
 
     pthread_mutex_init(&vm->lock, NULL);
+    pthread_mutex_init(&vm->phone_lock, NULL);
     pthread_condattr_t ca;
     pthread_condattr_init(&ca);
     pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
@@ -609,7 +599,8 @@ qp_vm *qp_create(const qp_config *cfg)
     vm->cpu.counter_ctx = vm;
 
     vm->start_ns = now_ns();
-    vm->brightness = -1;   /* nothing for the phone to undo at power-on */
+    vm->brightness = -1;
+    vm->phone.brightness = -1;
     do_reset(vm, QP_RESET_POWER_ON, 0);
     return vm;
 }
@@ -618,6 +609,7 @@ void qp_destroy(qp_vm *vm)
 {
     if (!vm) return;
     pthread_mutex_destroy(&vm->lock);
+    pthread_mutex_destroy(&vm->phone_lock);
     pthread_cond_destroy(&vm->vm_cv);
     pthread_cond_destroy(&vm->host_cv);
     free(vm);
@@ -756,36 +748,6 @@ void qp_snapshot_get(qp_vm *vm, qp_snapshot *out)
     run_on_vm(vm, snapshot_fn, out);
 }
 
-struct reg_io { uint32_t addr, value; };
-
-static void set_reg_fn(qp_vm *vm, void *arg)
-{
-    struct reg_io *io = arg;
-    uint32_t slot = (io->addr >> 16) & 0xfff, off = io->addr & 0xfffc;
-    if (in_device_space(io->addr) && slot >= DEV_SLOT_FIRST && slot <= DEV_SLOT_LAST
-        && off / 4 < DEV_WORDS)
-        vm->devregs[slot - DEV_SLOT_FIRST][off / 4] = io->value;
-}
-
-void qp_set_device_reg(qp_vm *vm, uint32_t addr, uint32_t value)
-{
-    struct reg_io io = { addr, value };
-    run_on_vm(vm, set_reg_fn, &io);
-}
-
-static void get_reg_fn(qp_vm *vm, void *arg)
-{
-    struct reg_io *io = arg;
-    io->value = in_device_space(io->addr) ? dev_read_word_peek(vm, io->addr) : 0;
-}
-
-uint32_t qp_get_device_reg(qp_vm *vm, uint32_t addr)
-{
-    struct reg_io io = { addr, 0 };
-    run_on_vm(vm, get_reg_fn, &io);
-    return io.value;
-}
-
 struct mem_job {
     void (*fn)(const uint8_t *flash, const uint8_t *ram, void *arg);
     void *arg;
@@ -820,15 +782,11 @@ void qp_get_device_regs(qp_vm *vm, const uint32_t *addrs, uint32_t *values, int 
     run_on_vm(vm, get_regs_fn, &io);
 }
 
-size_t qp_poll_events(qp_vm *vm, qp_event *out, size_t max)
+void qp_phone_get(qp_vm *vm, qp_phone *out)
 {
-    struct event_ring *r = &vm->events;
-    uint32_t t = atomic_load_explicit(&r->tail, memory_order_relaxed);
-    uint32_t h = atomic_load_explicit(&r->head, memory_order_acquire);
-    size_t n = 0;
-    while (t != h && n < max) out[n++] = r->ev[t++ & (EVENT_RING - 1)];
-    atomic_store_explicit(&r->tail, t, memory_order_release);
-    return n;
+    pthread_mutex_lock(&vm->phone_lock);
+    *out = vm->phone;
+    pthread_mutex_unlock(&vm->phone_lock);
 }
 
 static void gpio_get_fn(qp_vm *vm, void *arg)
@@ -886,14 +844,6 @@ size_t qp_gpio_trace(qp_vm *vm, uint64_t from, qp_gpio_change *out, size_t max,
     run_on_vm(vm, gpio_trace_fn, &io);
     if (first) *first = io.first;
     return io.n;
-}
-
-void qp_raise_irq(qp_vm *vm, uint32_t bits)
-{
-    atomic_fetch_or(&vm->raise_bits, bits);
-    pthread_mutex_lock(&vm->lock);
-    pthread_cond_signal(&vm->vm_cv);
-    pthread_mutex_unlock(&vm->lock);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1026,6 +976,7 @@ static void tail_fn(qp_vm *vm, void *arg)
 
 int qp_send_line(qp_vm *vm, const char *line, size_t len, int timeout_ms)
 {
+    if (len > QP_MAX_LINE) return QP_LINE_TOO_LONG;
     struct tail_io before, after;
     run_on_vm(vm, tail_fn, &before);
 
@@ -1080,18 +1031,13 @@ static void apply_requests(qp_vm *vm)
     }
     if (atomic_exchange(&vm->break_req, 0))
         vm->irq_raw |= QP_IRQ_BREAK;
-    uint32_t raise = atomic_exchange(&vm->raise_bits, 0);
-    vm->irq_raw |= raise & 0xfu;
     update_mip(vm);
 }
 
 static void notify_output(qp_vm *vm)
 {
-    if (atomic_exchange(&vm->tx_new, 0)) {
+    if (atomic_exchange(&vm->tx_new, 0))
         pthread_cond_broadcast(&vm->host_cv);
-        if (vm->cfg.uart_output)
-            vm->cfg.uart_output(vm->cfg.ctx);
-    }
 }
 
 /* Lock held. Sleeps in wfi until something happens. Returns when the VM
@@ -1102,8 +1048,6 @@ static void wfi_wait(qp_vm *vm)
         vm->in_wfi = 1;
         pthread_cond_broadcast(&vm->host_cv);   /* idle waiters */
     }
-
-    flush_tone(vm, 1);
 
     int timer_armed = (vm->cpu.mie & (1u << RV_IRQ_MTI)) && vm->mtimecmp != ~0ull;
     uint64_t now = mtime_us(vm);
@@ -1152,7 +1096,6 @@ void qp_run(qp_vm *vm)
         notify_output(vm);
         if (vm->shutdown) break;
         apply_requests(vm);
-        flush_tone(vm, 0);
 
         if (vm->paused) {
             if (!vm->paused_since_ns) vm->paused_since_ns = now_ns();

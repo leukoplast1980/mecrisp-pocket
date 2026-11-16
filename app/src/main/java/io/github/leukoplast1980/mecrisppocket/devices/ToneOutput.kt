@@ -28,8 +28,11 @@ class ToneOutput {
         }
     }
 
-    /** Fades the tone out. */
-    fun stop() = play(0, 0, 0, 0)
+    /** Fades the tone out. Nothing to do (and no thread to start) if none is playing. */
+    fun stop() {
+        synchronized(lock) { if (!running) return }
+        play(0, 0, 0, 0)
+    }
 
     /** Stops the thread and frees the audio track. */
     fun release() {

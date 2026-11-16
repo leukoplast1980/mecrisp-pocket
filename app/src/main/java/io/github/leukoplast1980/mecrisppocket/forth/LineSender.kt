@@ -5,14 +5,15 @@
  */
 package io.github.leukoplast1980.mecrisppocket.forth
 
-/** Forth's answer to one line. */
-enum class LineResult { OK, ERROR, TIMEOUT }
+/** Forth's answer to one line. TOO_LONG: longer than Forth's input buffer, not sent. */
+enum class LineResult { OK, ERROR, TIMEOUT, TOO_LONG }
 
 class SourceLine(val text: String, val file: String, val number: Int)
 
 sealed class SendResult {
     class Done(val lines: Int) : SendResult()
-    class Failed(val line: SourceLine, val timeout: Boolean) : SendResult()
+    /** [reason] is ERROR, TIMEOUT or TOO_LONG. */
+    class Failed(val line: SourceLine, val reason: LineResult) : SendResult()
     object Cancelled : SendResult()
 }
 
@@ -24,11 +25,8 @@ class LineSender(private val send: (String) -> LineResult) {
     fun run(lines: List<SourceLine>): SendResult {
         for (line in lines) {
             if (cancelled) return SendResult.Cancelled
-            when (send(line.text)) {
-                LineResult.OK -> Unit
-                LineResult.ERROR -> return SendResult.Failed(line, timeout = false)
-                LineResult.TIMEOUT -> return SendResult.Failed(line, timeout = true)
-            }
+            val r = send(line.text)
+            if (r != LineResult.OK) return SendResult.Failed(line, r)
         }
         return SendResult.Done(lines.size)
     }

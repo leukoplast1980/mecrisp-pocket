@@ -108,13 +108,17 @@ static int send_file(const char *path)
 {
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); return 1; }
-    char line[1024];
+    char *line = NULL;
+    size_t cap = 0;
     int rc = 0, number = 0;
-    while (!rc && fgets(line, sizeof line, f)) {
+    while (!rc && getline(&line, &cap, f) >= 0) {
         number++;
         line[strcspn(line, "\r\n")] = 0;
         int r = qp_send_line(vm, line, strlen(line), timeout_ms);
-        if (r == QP_LINE_ERROR) {
+        if (r == QP_LINE_TOO_LONG) {
+            fprintf(stderr, "\nqpemu: %s:%d: longer than %d bytes, stopped\n", path, number, QP_MAX_LINE);
+            rc = 3;
+        } else if (r == QP_LINE_ERROR) {
             sleep_ms(20);
             fprintf(stderr, "\nqpemu: %s:%d: error, stopped\n", path, number);
             rc = 3;
@@ -124,6 +128,7 @@ static int send_file(const char *path)
             rc = 2;
         }
     }
+    free(line);
     fclose(f);
     return rc;
 }
@@ -172,25 +177,16 @@ static int print_words(void)
     return 0;
 }
 
-/* Prints the device events the board sent since the last call, one per line:
- * "event: vibrate MS", "event: brightness N", "event: tone HZ MS WAVE VOLUME". */
-static int print_events(void)
+/* Prints what the board asks of the phone:
+ * "phone: vibrate MS (SEQ) brightness B tone HZ MS WAVE VOLUME (SEQ)". */
+static int print_phone(void)
 {
-    qp_event ev[64];
-    size_t n;
+    qp_phone p;
     sleep_ms(20);  /* let pending Forth output go first */
-    while ((n = qp_poll_events(vm, ev, 64)) > 0) {
-        for (size_t k = 0; k < n; k++) {
-            switch (ev[k].type) {
-            case QP_EVENT_VIBRATE: printf("event: vibrate %d\n", ev[k].a); break;
-            case QP_EVENT_BRIGHTNESS: printf("event: brightness %d\n", ev[k].a); break;
-            case QP_EVENT_TONE:
-                printf("event: tone %d %d %d %d\n", ev[k].a, ev[k].b, ev[k].c, ev[k].d);
-                break;
-            default: printf("event: %d\n", ev[k].type); break;
-            }
-        }
-    }
+    qp_phone_get(vm, &p);
+    printf("phone: vibrate %d (%u) brightness %d tone %d %d %d %d (%u)\n",
+           p.vibrate_ms, p.vibrate_seq, p.brightness,
+           p.tone_hz, p.tone_ms, p.tone_wave, p.tone_volume, p.tone_seq);
     fflush(stdout);
     return 0;
 }
@@ -245,7 +241,7 @@ static void usage(void)
 {
     fprintf(stderr, "usage: qpemu [--flash FILE] [--virtual-time] [--timeout MS] IMAGE"
                     " [-e TEXT | -f FILE | --break-after MS | --reset | --safe-reset"
-                    " | --events | --gpio | --gpio-in LEVELS | -i]...\n");
+                    " | --phone | --gpio | --gpio-in LEVELS | -i]...\n");
     exit(1);
 }
 
@@ -313,8 +309,8 @@ int main(int argc, char **argv)
             rc = print_where();
         } else if (!strcmp(a, "--words")) {
             rc = print_words();
-        } else if (!strcmp(a, "--events")) {
-            rc = print_events();
+        } else if (!strcmp(a, "--phone")) {
+            rc = print_phone();
         } else if (!strcmp(a, "--gpio")) {
             rc = print_gpio();
         } else if (!strcmp(a, "--gpio-in") && i + 1 < argc) {

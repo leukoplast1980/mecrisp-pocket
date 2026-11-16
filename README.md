@@ -39,8 +39,11 @@ In the editor:
   the folder once; the app keeps access to it)
 - **Send** sends the current line, the selection or the whole file; sending
   stops at the first line that does not answer " ok." and marks it red
-- changed files are saved when you leave the app or close their tab; the open
-  files, cursor positions and the console text come back after a restart
+- changed files are saved when you leave the app; closing a tab with changes
+  asks first. The open files, cursor positions and the console text come back
+  after a restart
+- a line can be up to 1024 characters long (Forth's input buffer); Send stops
+  at a longer one instead of letting Forth cut it off
 - with a hardware keyboard: Ctrl+S save, Ctrl+Enter send line, Ctrl+Z / Ctrl+Y
   undo and redo, Ctrl+F find, Ctrl+Space or Tab complete
 

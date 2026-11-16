@@ -56,6 +56,7 @@ class ConsoleController(
     private val rawLine = StringBuilder()
 
     private val readBuffer = ByteArray(4096)
+    private val received = StringBuilder()
     private val decoder = Charsets.UTF_8.newDecoder()
         .onMalformedInput(CodingErrorAction.REPLACE)
         .onUnmappableCharacter(CodingErrorAction.REPLACE)
@@ -136,17 +137,25 @@ class ConsoleController(
     // ------------------------------------------------------------------
     // Output
 
-    /** Moves Forth's output into the console. Call regularly on the UI thread. */
+    /**
+     * Moves Forth's output into the console. Call regularly on the UI thread.
+     * Takes at most MAX_POLL_BYTES per call: a program that prints without
+     * end refills the output as fast as it is read, and reading until it is
+     * empty would never return. Forth waits while the output buffer is full.
+     */
     fun poll() {
         while (true) {
             expectedEcho.addLast(vm.sentLines.poll() ?: break)
             if (expectedEcho.size > MAX_EXPECTED) expectedEcho.removeFirst()
         }
-        var gotAny = false
-        while (true) {
+        // One append per poll: every append lays out the console's last line
+        // again, and a program printing without newlines makes that line long.
+        received.setLength(0)
+        var taken = 0
+        while (taken < MAX_POLL_BYTES) {
             val n = vm.read(readBuffer)
             if (n <= 0) break
-            gotAny = true
+            taken += n
             var off = 0
             while (off < n) {
                 val take = minOf(n - off, pending.remaining())
@@ -156,11 +165,14 @@ class ConsoleController(
                 decoder.decode(pending, chars, false)
                 pending.compact()
                 chars.flip()
-                appendText(chars.toString())
+                received.append(chars)
                 chars.clear()
             }
         }
-        if (gotAny && followOutput) scroll.post { scroll.scrollTo(0, output.bottom) }
+        if (received.isNotEmpty()) {
+            appendText(received.toString())
+            if (followOutput) scroll.post { scroll.scrollTo(0, output.bottom) }
+        }
 
         if (dictionaryStale && !dictionaryLoading && vm.waitingForKey()) {
             dictionaryStale = false
@@ -306,6 +318,13 @@ class ConsoleController(
 
     private fun sendLine() {
         val line = input.text.toString()
+        val bytes = line.toByteArray(Charsets.UTF_8).size
+        if (bytes > VmHost.MAX_LINE_BYTES) {
+            // Forth would cut it off without an error: keep it for editing.
+            Toast.makeText(activity, activity.getString(R.string.line_too_long, bytes, VmHost.MAX_LINE_BYTES),
+                Toast.LENGTH_LONG).show()
+            return
+        }
         input.text.clear()
         history.add(line)
         vm.sentLines.add(line)
@@ -398,10 +417,7 @@ class ConsoleController(
     override fun completionDictionary(): Dictionary = vm.dictionary
 
     override fun arrow(keyCode: Int) {
-        if (rawMode) {
-            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) rawSpecialKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))
-            return
-        }
+        if (rawMode) return   // Forth's line input has no cursor to move
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> recall(-1)
             KeyEvent.KEYCODE_DPAD_DOWN -> recall(1)
@@ -414,7 +430,8 @@ class ConsoleController(
     }
 
     companion object {
-        private const val MAX_CHARS = 200_000
+        private const val MAX_CHARS = 100_000
+        private const val MAX_POLL_BYTES = 16 * 1024
         private const val SAVED_CHARS = 20_000
         private const val MAX_EXPECTED = 64
         private const val ECHO_LOOKAHEAD = 8

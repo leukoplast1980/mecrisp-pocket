@@ -10,7 +10,6 @@ object NativeVm {
     }
 
     @JvmStatic external fun create(virtualTime: Boolean): Long
-    @JvmStatic external fun destroy(handle: Long)
     @JvmStatic external fun loadFlash(handle: Long, image: ByteArray)
     @JvmStatic external fun copyFlashIfDirty(handle: Long): ByteArray?
 
@@ -41,8 +40,11 @@ object NativeVm {
      */
     @JvmStatic external fun dictionary(handle: Long, layout: IntArray): Array<Any>?
 
-    /** Fills [out] with events of 5 ints each (type, a, b, c, d); returns how many. */
-    @JvmStatic external fun pollEvents(handle: Long, out: IntArray): Int
+    /**
+     * What the board asks of the phone, into [out] (8 ints): vibrate seq,
+     * vibrate ms, brightness, tone seq, tone Hz, tone ms left, waveform, volume.
+     */
+    @JvmStatic external fun phoneState(handle: Long, out: IntArray)
 
     /** [out] (6 longs): dir, out, ext, levels, board time in µs, index of the next trace entry. */
     @JvmStatic external fun gpioState(handle: Long, out: LongArray)

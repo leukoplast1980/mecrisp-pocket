@@ -37,6 +37,11 @@
 .equ FlashDictionaryAnfang, FlashAnfang + 0x8000 # 32 KiB reserved for core.
 .equ FlashDictionaryEnde,   FlashEnde            # 224 KiB user flash dictionary
 
+# Input line length. The core's default of 200 cut longer source lines off
+# without an error; the app and qpemu refuse lines longer than this
+# (QP_MAX_LINE in emu/include/qp/pocket.h).
+.equ tiblength, 1024
+
 # -----------------------------------------------------------------------------
 # Board registers used by the core (see docs/board.md)
 # -----------------------------------------------------------------------------

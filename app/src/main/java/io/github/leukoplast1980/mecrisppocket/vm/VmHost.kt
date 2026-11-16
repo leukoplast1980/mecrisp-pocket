@@ -104,10 +104,14 @@ class VmHost private constructor(context: Context) {
         }
     }
 
+    /** An image whose write failed; written next time unless flash changed again. */
+    private var unsaved: ByteArray? = null
+
     /** Writes the flash image to storage if it changed. Atomic: temp file + rename. */
     @Synchronized
     fun saveFlash() {
-        val image = NativeVm.copyFlashIfDirty(handle) ?: return
+        // Copying clears the board's "changed" mark, so a failed write is kept for a retry.
+        val image = NativeVm.copyFlashIfDirty(handle) ?: unsaved ?: return
         val tmp = File(files, "flash.img.tmp")
         try {
             tmp.outputStream().use { out ->
@@ -115,8 +119,10 @@ class VmHost private constructor(context: Context) {
                 out.fd.sync()
             }
             if (!tmp.renameTo(flashFile)) throw IOException("rename failed")
+            unsaved = null
         } catch (e: IOException) {
             Log.e(TAG, "cannot save flash", e)
+            unsaved = image
         }
     }
 
@@ -126,6 +132,7 @@ class VmHost private constructor(context: Context) {
         NativeVm.pause(handle, true)
         NativeVm.loadFlash(handle, shippedImage)
         flashFile.delete()
+        unsaved = null
         writeCoreHash(shippedCoreHash)
         coreUpdateAvailable = false
         NativeVm.requestReset(handle, false)
@@ -155,8 +162,8 @@ class VmHost private constructor(context: Context) {
     fun readMemory(address: Int, length: Int): ByteArray? = NativeVm.readMemory(handle, address, length)
     fun waitingForKey(): Boolean = NativeVm.waitingForKey(handle)
 
-    /** Device events (vibrate, brightness, tone), 5 ints each; returns how many. */
-    fun pollEvents(out: IntArray): Int = NativeVm.pollEvents(handle, out)
+    /** What the board asks of the phone (see NativeVm.phoneState). */
+    fun phoneState(out: IntArray) = NativeVm.phoneState(handle, out)
 
     fun gpioState(out: LongArray) = NativeVm.gpioState(handle, out)
     fun gpioSetInput(mask: Int, levels: Int) = NativeVm.gpioSetInput(handle, mask, levels)
@@ -196,10 +203,13 @@ class VmHost private constructor(context: Context) {
 
     /** Sends one source line and waits for Forth's answer. Blocks: not on the UI thread. */
     fun sendLineChecked(line: String, timeoutMs: Int): LineResult {
+        val bytes = line.toByteArray(Charsets.UTF_8)
+        if (bytes.size > MAX_LINE_BYTES) return LineResult.TOO_LONG
         sentLines.add(line)
-        return when (NativeVm.sendLine(handle, line.toByteArray(Charsets.UTF_8), timeoutMs)) {
+        return when (NativeVm.sendLine(handle, bytes, timeoutMs)) {
             0 -> LineResult.OK
             1 -> LineResult.ERROR
+            3 -> LineResult.TOO_LONG
             else -> LineResult.TIMEOUT
         }
     }
@@ -207,6 +217,12 @@ class VmHost private constructor(context: Context) {
     companion object {
         private const val TAG = "VmHost"
         const val FLASH_SIZE = 256 * 1024
+
+        /**
+         * Forth's input buffer (tiblength in quintus/pocket, QP_MAX_LINE in
+         * the emulator): a longer line would be cut off without an error.
+         */
+        const val MAX_LINE_BYTES = 1024
 
         @Volatile private var instance: VmHost? = null
 
