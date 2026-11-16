@@ -4,10 +4,10 @@ A Forth programming environment for Android that runs the real
 [Mecrisp-Quintus](https://mecrisp.sourceforge.net/) Forth on an emulated
 RISC-V microcontroller board.
 
-**Status:** milestone 3 — the emulator, the Quintus port, a REPL and an editor
-with completion and syntax colouring, a Registers view, files and sessions.
-Phone devices, the GPIO view, `include` and the USB GPIO breakout come in
-later milestones.
+**Status:** milestone 4 — the emulator, the Quintus port, a REPL and an editor
+with completion and syntax colouring, Registers and GPIO views, files and
+sessions, and the phone's vibrator, screen brightness and tones as board
+devices. `include` and the USB GPIO breakout come in later milestones.
 
 ## Trying it
 
@@ -34,8 +34,22 @@ In the editor:
 - with a hardware keyboard: Ctrl+S save, Ctrl+Enter send line, Ctrl+Z / Ctrl+Y
   undo and redo, Ctrl+F find, Ctrl+Space or Tab complete
 
-On a phone the screens are tabs (REPL, Editor, Registers). On a tablet or in
-landscape the editor sits on the left and REPL and Registers share the right.
+On a phone the screens are tabs (REPL, Editor, Registers, GPIO). On a tablet
+or in landscape the editor sits on the left and the others share the right.
+
+The board drives the phone and 16 virtual pins:
+
+```forth
+200 vibrate                 \ vibrate for 200 ms
+100 brightness              \ dim the screen; -1 brightness restores it
+2 waveform 880 300 tone     \ a triangle wave, 880 Hz for 300 ms
+0 pin-out 0 pin-high        \ pin 0 is an output, set high
+5 pin@ .                    \ read pin 5: tap it in the GPIO view to change it
+```
+
+The GPIO view shows each pin's direction and level, and a logic trace of
+the last 50 ms, 0.5 s or 5 s. All words and registers are in
+[docs/board.md](docs/board.md).
 
 ## Layout
 

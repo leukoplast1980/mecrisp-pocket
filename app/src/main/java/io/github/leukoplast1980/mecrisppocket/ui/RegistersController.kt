@@ -255,7 +255,19 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
             if ((v and 4) != 0) add("audio")
             if ((v and 8) != 0) add("gpio")
         }.joinToString(" ")
+        "VIB TIME", "AUDIO TIME" -> if (v > 0) "$v ms left" else ""
+        "BRIGHTNESS" -> if (v < 0) "system setting" else ""
+        "AUDIO FREQ" -> "$v Hz"
+        "AUDIO WAVE" -> WAVES.getOrElse(v) { "" }
+        "AUDIO VOLUME" -> "$v %"
+        "GPIO DIR", "GPIO OUT", "GPIO IN" -> pinList(v)
         else -> ""
+    }
+
+    /** "0 3 7" for the pins whose bits are set; empty for none. */
+    private fun pinList(v: Int): String {
+        val pins = (0 until 16).filter { ((v shr it) and 1) != 0 }
+        return if (pins.isEmpty()) "" else pins.joinToString(" ", prefix = "pins ")
     }
 
     companion object {
@@ -274,6 +286,16 @@ class RegistersController(private val activity: Activity, private val vm: VmHost
             "MTIME HI" to 0x40060004,
             "MTIMECMP LO" to 0x40060008,
             "MTIMECMP HI" to 0x4006000C,
+            "VIB TIME" to 0x40070000,
+            "BRIGHTNESS" to 0x40080000,
+            "AUDIO FREQ" to 0x40090000,
+            "AUDIO TIME" to 0x40090004,
+            "AUDIO WAVE" to 0x40090008,
+            "AUDIO VOLUME" to 0x4009000C,
+            "GPIO DIR" to 0x400C0000,
+            "GPIO OUT" to 0x400C0004,
+            "GPIO IN" to 0x400C0008,
         )
+        private val WAVES = listOf("sine", "square", "triangle", "sawtooth")
     }
 }

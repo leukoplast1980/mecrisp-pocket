@@ -51,15 +51,57 @@ through the flash write port, so a runaway program cannot damage saved words.
 | `0x4005_0008` | IRQ ACK | W | Write 1 to clear a pending bit |
 | `0x4006_0000` | MTIME LO/HI | R | Microseconds since VM start (`+0`, `+4`) |
 | `0x4006_0008` | MTIMECMP LO/HI | R/W | Timer interrupt when MTIME ≥ MTIMECMP (`+8`, `+C`) |
-| `0x4007_0000` | Vibrator | | Milestone 4 |
-| `0x4008_0000` | Display | | Milestone 4 |
-| `0x4009_0000` | Audio | | Milestone 4 |
+| `0x4007_0000` | VIB TIME | R/W | Write: vibrate for n ms (0 stops, at most 60000). Read: ms left |
+| `0x4008_0000` | BRIGHTNESS | R/W | Screen brightness 0..255, or -1 for the system setting (reset value) |
+| `0x4009_0000` | AUDIO FREQ | R/W | Tone frequency in Hz, 0..20000 (reset value 440) |
+| `0x4009_0004` | AUDIO TIME | R/W | Write: play the tone for n ms (0 stops). Read: ms left |
+| `0x4009_0008` | AUDIO WAVE | R/W | 0 sine (reset value), 1 square, 2 triangle, 3 sawtooth |
+| `0x4009_000C` | AUDIO VOLUME | R/W | 0..100 (reset value 50) |
 | `0x400A_0000` | Torch | | Reserved |
 | `0x400B_0000` | Sensors | | Reserved |
-| `0x400C_0000` | GPIO | | Milestone 4 |
+| `0x400C_0000` | GPIO DIR | R/W | Pin directions, bit n = pin n: 1 output, 0 input (reset value 0) |
+| `0x400C_0004` | GPIO OUT | R/W | Output latch |
+| `0x400C_0008` | GPIO IN | R | Pin levels: OUT on output pins, the outside level on input pins |
+| `0x400C_000C` | GPIO SET | W | Sets the 1 bits in OUT |
+| `0x400C_0010` | GPIO CLR | W | Clears the 1 bits in OUT |
+| `0x400C_0014` | GPIO TOGGLE | W | Flips the 1 bits in OUT |
 
 IRQ PENDING AND IRQ ENABLE drives the machine external interrupt; the timer
-drives the machine timer interrupt.
+drives the machine timer interrupt. A tone that runs out sets the audio bit.
+
+## Phone devices and pins
+
+The vibrator, brightness and tone registers are carried out by the phone:
+vibration and tones while the app is in front, brightness for the app's
+window (0 is the dimmest setting that stays readable). Changing the
+frequency, waveform or volume while a tone plays changes the playing tone,
+so a loop can sweep it. Reset stops vibration and the tone and restores the
+brightness.
+
+There are 16 GPIO pins, 0..15. Input pins read what the outside drives on
+them: in the app, a tap on the pin in the GPIO view; later a USB breakout.
+Reset makes all pins inputs and clears OUT.
+
+The board records every level change with its time for the GPIO view's
+logic trace. Changes within the same 100 µs share one entry; a pin that
+changes more than once in it is drawn as fast toggling.
+
+Words for all of this are in the core (so `eraseflash` keeps them):
+
+| Word | Stack | |
+| --- | --- | --- |
+| `vibrate` | `( ms -- )` | Vibrates; 0 stops |
+| `brightness` | `( n -- )` | 0..255; -1 for the system setting |
+| `tone` | `( Hz ms -- )` | Plays a tone and returns at once |
+| `silence` | `( -- )` | Stops the tone |
+| `tone?` | `( -- ? )` | True while a tone plays |
+| `waveform` | `( n -- )` | 0 sine, 1 square, 2 triangle, 3 sawtooth |
+| `volume` | `( n -- )` | 0..100 |
+| `pin-out`, `pin-in` | `( pin -- )` | Sets the direction |
+| `pin-high`, `pin-low`, `pin-toggle` | `( pin -- )` | Sets an output |
+| `pin@` | `( pin -- ? )` | True if the pin is high |
+| `pins@` | `( -- x )` | All levels, pin 0 in bit 0 |
+| `pins!` | `( x -- )` | Writes OUT for all pins at once |
 
 ## Port behaviour
 

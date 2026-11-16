@@ -53,6 +53,12 @@
     <string name="discard">Discard</string>
     <string name="unsaved">unsaved</string>
     <string name="settings">Settings</string>
+    <string name="tab_gpio">GPIO</string>
+    <string name="gpio_hint">Tap an input pin to change its level.</string>
+    <string name="gpio_output_pin">Pin %1$d is an output: the program sets its level.</string>
+    <string name="gpio_window_50ms">50 ms</string>
+    <string name="gpio_window_500ms">0.5 s</string>
+    <string name="gpio_window_5s">5 s</string>
     <string name="back">Back</string>
     <string name="text_size">Text size</string>
     <string name="text_size_value">%1$d sp</string>

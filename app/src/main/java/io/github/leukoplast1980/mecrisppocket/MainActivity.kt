@@ -36,18 +36,22 @@ import io.github.leukoplast1980.mecrisppocket.ui.ConsoleController
 import io.github.leukoplast1980.mecrisppocket.ui.EditorController
 import io.github.leukoplast1980.mecrisppocket.ui.ExtraKeys
 import io.github.leukoplast1980.mecrisppocket.ui.InputTarget
+import io.github.leukoplast1980.mecrisppocket.devices.PhoneDevices
+import io.github.leukoplast1980.mecrisppocket.gpio.GpioController
 import io.github.leukoplast1980.mecrisppocket.ui.RegistersController
 import io.github.leukoplast1980.mecrisppocket.ui.SuggestionStrip
 import io.github.leukoplast1980.mecrisppocket.vm.VmHost
 
 class MainActivity : AppCompatActivity() {
 
-    private enum class Screen { REPL, EDITOR, REGISTERS }
+    private enum class Screen { REPL, EDITOR, REGISTERS, GPIO }
 
     private lateinit var vm: VmHost
     private lateinit var console: ConsoleController
     private lateinit var editor: EditorController
     private lateinit var registers: RegistersController
+    private lateinit var gpio: GpioController
+    private lateinit var devices: PhoneDevices
     private lateinit var strip: SuggestionStrip
     private lateinit var folder: ProjectFolder
     private lateinit var sessionStore: SessionStore
@@ -58,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rightPane: View
     private lateinit var replPane: View
     private lateinit var registersPane: View
+    private lateinit var gpioPane: View
     private lateinit var divider: View
     private lateinit var extraKeysScroll: View
     private lateinit var title: TextView
@@ -81,6 +86,7 @@ class MainActivity : AppCompatActivity() {
     private val poll = object : Runnable {
         override fun run() {
             console.poll()
+            devices.poll()
             updateTitle()
             handler.postDelayed(this, POLL_MS)
         }
@@ -90,6 +96,13 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             if (registersVisible()) registers.refresh()
             handler.postDelayed(this, REGISTERS_MS)
+        }
+    }
+
+    private val gpioRefresh = object : Runnable {
+        override fun run() {
+            if (screen == Screen.GPIO) gpio.refresh()
+            handler.postDelayed(this, GPIO_MS)
         }
     }
 
@@ -126,6 +139,8 @@ class MainActivity : AppCompatActivity() {
         )
         registers = RegistersController(this, vm)
         registers.onPausedChanged = { console.markDictionaryStale() }
+        gpio = GpioController(this, vm)
+        devices = PhoneDevices(this, vm)
         ExtraKeys(findViewById<LinearLayout>(R.id.extraKeys)) { activeInput() }
 
         tabs = findViewById(R.id.tabs)
@@ -133,6 +148,7 @@ class MainActivity : AppCompatActivity() {
         rightPane = findViewById(R.id.rightPane)
         replPane = findViewById(R.id.replPane)
         registersPane = findViewById(R.id.registersPane)
+        gpioPane = findViewById(R.id.gpioPane)
         divider = findViewById(R.id.paneDivider)
         extraKeysScroll = findViewById(R.id.extraKeysScroll)
         title = findViewById(R.id.title)
@@ -201,15 +217,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun registersVisible(): Boolean = screen == Screen.REGISTERS
 
-    /** Tabs: REPL, Editor, Registers on phones; REPL, Registers on wide screens. */
+    /** Tabs: REPL, Editor, Registers, GPIO on phones; the same without Editor on wide screens. */
     private fun rebuildTabs(wide: Boolean) {
         if (tabsWide == wide) return
         tabsWide = wide
         rebuildingTabs = true
         tabs.removeAllTabs()
-        val order = if (wide) listOf(Screen.REPL, Screen.REGISTERS) else listOf(Screen.REPL, Screen.EDITOR, Screen.REGISTERS)
+        val order = if (wide) listOf(Screen.REPL, Screen.REGISTERS, Screen.GPIO)
+        else listOf(Screen.REPL, Screen.EDITOR, Screen.REGISTERS, Screen.GPIO)
         for (s in order) {
-            val label = when (s) { Screen.REPL -> R.string.tab_repl; Screen.EDITOR -> R.string.tab_editor; Screen.REGISTERS -> R.string.tab_registers }
+            val label = when (s) {
+                Screen.REPL -> R.string.tab_repl
+                Screen.EDITOR -> R.string.tab_editor
+                Screen.REGISTERS -> R.string.tab_registers
+                Screen.GPIO -> R.string.tab_gpio
+            }
             tabs.addTab(tabs.newTab().setText(label).setTag(s), false)
         }
         rebuildingTabs = false
@@ -229,18 +251,21 @@ class MainActivity : AppCompatActivity() {
         editorPane.visibility = if (wide || screen == Screen.EDITOR) View.VISIBLE else View.GONE
         divider.visibility = if (wide) View.VISIBLE else View.GONE
         rightPane.visibility = if (wide || screen != Screen.EDITOR) View.VISIBLE else View.GONE
-        replPane.visibility = if (screen == Screen.REGISTERS) View.GONE else View.VISIBLE
+        val tool = screen == Screen.REGISTERS || screen == Screen.GPIO
+        replPane.visibility = if (tool) View.GONE else View.VISIBLE
         registersPane.visibility = if (screen == Screen.REGISTERS) View.VISIBLE else View.GONE
+        gpioPane.visibility = if (screen == Screen.GPIO) View.VISIBLE else View.GONE
 
         if (!wide) {
             when (screen) {
                 Screen.REPL -> console.focusInput()
                 Screen.EDITOR -> editor.editor.requestFocus()
-                Screen.REGISTERS -> getSystemService(InputMethodManager::class.java)
-                    ?.hideSoftInputFromWindow(registersPane.windowToken, 0)
+                Screen.REGISTERS, Screen.GPIO -> getSystemService(InputMethodManager::class.java)
+                    ?.hideSoftInputFromWindow(rightPane.windowToken, 0)
             }
         }
         if (registersVisible() && started) registers.refresh()
+        if (screen == Screen.GPIO && started) gpio.refresh()
         updateStrip()
     }
 
@@ -250,11 +275,11 @@ class MainActivity : AppCompatActivity() {
             return when (screen) {
                 Screen.REPL -> console
                 Screen.EDITOR -> editor
-                Screen.REGISTERS -> null
+                Screen.REGISTERS, Screen.GPIO -> null
             }
         }
         if (editor.editor.hasFocus()) return editor
-        if (screen == Screen.REGISTERS) return editor
+        if (screen == Screen.REGISTERS || screen == Screen.GPIO) return editor
         return lastInput ?: console
     }
 
@@ -327,6 +352,7 @@ class MainActivity : AppCompatActivity() {
         vm.setForeground(true)
         handler.post(poll)
         handler.post(registerRefresh)
+        handler.post(gpioRefresh)
         handler.postDelayed(autosave, AUTOSAVE_MS)
     }
 
@@ -344,6 +370,8 @@ class MainActivity : AppCompatActivity() {
         started = false
         handler.removeCallbacks(poll)
         handler.removeCallbacks(registerRefresh)
+        handler.removeCallbacks(gpioRefresh)
+        devices.quiet()
         handler.removeCallbacks(autosave)
         vm.setForeground(false)
         console.history.save()
@@ -361,6 +389,11 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
     }
 
+    override fun onDestroy() {
+        if (::devices.isInitialized) devices.release()
+        super.onDestroy()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putCharSequence(KEY_OUTPUT, console.savedText())
@@ -369,6 +402,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val POLL_MS = 30L
         private const val REGISTERS_MS = 50L
+        private const val GPIO_MS = 33L
         private const val AUTOSAVE_MS = 5000L
         private const val WIDE_DP = 600
         private const val KEY_OUTPUT = "output"

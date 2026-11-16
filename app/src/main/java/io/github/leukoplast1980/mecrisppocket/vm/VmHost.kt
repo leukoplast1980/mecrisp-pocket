@@ -150,6 +150,13 @@ class VmHost private constructor(context: Context) {
     fun readMemory(address: Int, length: Int): ByteArray? = NativeVm.readMemory(handle, address, length)
     fun waitingForKey(): Boolean = NativeVm.waitingForKey(handle)
 
+    /** Device events (vibrate, brightness, tone), 5 ints each; returns how many. */
+    fun pollEvents(out: IntArray): Int = NativeVm.pollEvents(handle, out)
+
+    fun gpioState(out: LongArray) = NativeVm.gpioState(handle, out)
+    fun gpioSetInput(mask: Int, levels: Int) = NativeVm.gpioSetInput(handle, mask, levels)
+    fun gpioTrace(from: Long, out: LongArray): Int = NativeVm.gpioTrace(handle, from, out)
+
     /** Re-reads the dictionary from guest memory. Call off the UI thread. */
     fun refreshDictionary(): Dictionary {
         val d = Dictionary.fromNative(
