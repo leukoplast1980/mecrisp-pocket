@@ -6,7 +6,9 @@
 package io.github.leukoplast1980.mecrisppocket.devices
 
 import android.app.Activity
+import android.media.AudioAttributes
 import android.os.Build
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -42,10 +44,25 @@ class PhoneDevices(private val activity: Activity, private val vm: VmHost) {
         }
     }
 
+    /**
+     * Without a usage, Android files a short vibration under touch feedback
+     * and drops it when the phone's touch vibration is off (a common
+     * setting). The program asked for it explicitly, so it goes out as an
+     * alarm vibration, which phones play even in silent mode.
+     */
     private fun vibrate(ms: Int) {
         val v = vibrator ?: return
-        if (ms <= 0) v.cancel()
-        else v.vibrate(VibrationEffect.createOneShot(ms.toLong(), VibrationEffect.DEFAULT_AMPLITUDE))
+        if (ms <= 0) {
+            v.cancel()
+            return
+        }
+        val effect = VibrationEffect.createOneShot(ms.toLong(), VibrationEffect.DEFAULT_AMPLITUDE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            v.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM))
+        } else {
+            @Suppress("DEPRECATION")
+            v.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
+        }
     }
 
     /** 0..255, or -1 for the system setting. 0 stays readable: a dark screen could not be reset. */
