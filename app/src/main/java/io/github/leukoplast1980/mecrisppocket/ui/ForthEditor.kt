@@ -16,6 +16,7 @@ import android.text.Layout
 import android.text.Selection
 import android.text.TextWatcher
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.inputmethod.EditorInfo
 import com.amrdeveloper.codeview.CodeView
@@ -24,9 +25,9 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Long lines wrap. The gutter numbers source lines, so a wrapped line gets
- * one number on its first row, and the current line highlight covers all
- * rows of the cursor's source line.
+ * Long lines wrap (a setting). The gutter numbers source lines, so a wrapped
+ * line gets one number on its first row, and the current line highlight
+ * covers all rows of the cursor's source line.
  *
  * CodeView's own line numbers are not used: they are drawn into a padding
  * narrower than the numbers (they overlap the text), count screen rows
@@ -53,6 +54,7 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
     private var numbersRight = 0f
     private var gutterRight = 0f
     private var gutterUpdatePosted = false
+    private var wrap = true
 
     /** Newlines in the text, kept up to date on every change. */
     private var newlines = 0
@@ -109,6 +111,22 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
         return anchorNewlines
     }
 
+    /** Text size in sp; the line numbers follow it. */
+    fun setTextSizeSp(sp: Float) {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+        numberPaint.textSize = textSize * 0.85f
+        updateGutter(digitsFor(newlines + 1))
+        invalidate()
+    }
+
+    /** Wrap long lines, or scroll sideways. */
+    fun setLineWrap(on: Boolean) {
+        if (on == wrap) return
+        wrap = on
+        setHorizontallyScrolling(!on)
+        if (on) scrollTo(0, scrollY)
+    }
+
     /** At least two digits, so the text does not jump between line 9 and 10. */
     private fun digitsFor(lines: Int) = max(2, lines.toString().length)
 
@@ -142,6 +160,11 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
             }
         }
 
+        // Drawn in view coordinates, so the gutter stays put when the text
+        // scrolls sideways (line wrap off). TextView clips the text to the
+        // padding, so it never runs into the gutter.
+        val left = scrollX.toFloat()
+
         // Current source line, all of its rows, under the text.
         val cursor = Selection.getSelectionStart(t)
         var cursorFirst = -1
@@ -155,13 +178,13 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
             cursorLast = lay.getLineForOffset(end)
             val top = (lay.getLineTop(cursorFirst) + extendedPaddingTop).toFloat()
             val bottom = (lay.getLineBottom(cursorLast) + extendedPaddingTop).toFloat()
-            canvas.drawRect(gutterRight, top, width.toFloat(), bottom, currentLinePaint)
+            canvas.drawRect(left + gutterRight, top, left + width, bottom, currentLinePaint)
         }
 
         super.onDraw(canvas)
 
         val top = scrollY.toFloat()
-        canvas.drawLine(gutterRight, top, gutterRight, top + height, dividerPaint)
+        canvas.drawLine(left + gutterRight, top, left + gutterRight, top + height, dividerPaint)
 
         val contentTop = scrollY - extendedPaddingTop
         val first = lay.getLineForVertical(max(0, contentTop))
@@ -171,7 +194,7 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
             if (!isFirstRow(lay, t, row)) continue
             if (row != first) number++
             numberPaint.color = if (row == cursorFirst) currentNumberColor else numberColor
-            canvas.drawText(number.toString(), numbersRight, getLineBounds(row, null).toFloat(), numberPaint)
+            canvas.drawText(number.toString(), left + numbersRight, getLineBounds(row, null).toFloat(), numberPaint)
         }
     }
 

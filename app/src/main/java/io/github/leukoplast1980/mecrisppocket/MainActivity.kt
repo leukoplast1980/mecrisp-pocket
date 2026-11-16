@@ -5,12 +5,14 @@
  */
 package io.github.leukoplast1980.mecrisppocket
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.HorizontalScrollView
@@ -27,6 +29,8 @@ import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.tabs.TabLayout
 import io.github.leukoplast1980.mecrisppocket.files.ProjectFolder
 import io.github.leukoplast1980.mecrisppocket.files.SessionStore
+import io.github.leukoplast1980.mecrisppocket.settings.Settings
+import io.github.leukoplast1980.mecrisppocket.settings.SettingsActivity
 import io.github.leukoplast1980.mecrisppocket.ui.Completion
 import io.github.leukoplast1980.mecrisppocket.ui.ConsoleController
 import io.github.leukoplast1980.mecrisppocket.ui.EditorController
@@ -47,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var strip: SuggestionStrip
     private lateinit var folder: ProjectFolder
     private lateinit var sessionStore: SessionStore
+    private lateinit var settings: Settings
 
     private lateinit var tabs: TabLayout
     private lateinit var editorPane: View
@@ -105,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         vm = VmHost.get(this)
         folder = ProjectFolder(this)
         sessionStore = SessionStore(this)
+        settings = Settings(this)
 
         strip = SuggestionStrip(this, findViewById<HorizontalScrollView>(R.id.suggestionScroll), findViewById(R.id.suggestions))
         console = ConsoleController(
@@ -278,6 +284,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.copy_all -> console.copyAll()
                 R.id.clear_screen -> console.clear()
                 R.id.project_folder -> pickFolder.launch(folder.treeUri)
+                R.id.settings -> startActivity(Intent(this, SettingsActivity::class.java))
             }
             true
         }
@@ -315,11 +322,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        applySettings()
         started = true
         vm.setForeground(true)
         handler.post(poll)
         handler.post(registerRefresh)
         handler.postDelayed(autosave, AUTOSAVE_MS)
+    }
+
+    /** Settings may have changed on the Settings screen. */
+    private fun applySettings() {
+        val sp = settings.textSizeSp.toFloat()
+        editor.editor.setTextSizeSp(sp)
+        editor.editor.setLineWrap(settings.lineWrap)
+        console.setTextSizeSp(sp)
+        if (settings.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     override fun onStop() {

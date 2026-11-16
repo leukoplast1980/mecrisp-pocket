@@ -13,4 +13,7 @@
     <item
         android:id="@+id/project_folder"
         android:title="@string/change_folder" />
+    <item
+        android:id="@+id/settings"
+        android:title="@string/settings" />
 </menu>

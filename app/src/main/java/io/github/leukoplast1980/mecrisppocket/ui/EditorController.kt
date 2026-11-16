@@ -8,6 +8,11 @@ package io.github.leukoplast1980.mecrisppocket.ui
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.content.DialogInterface
+import android.graphics.Rect
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -177,13 +182,21 @@ class EditorController(
         fileTabs.removeAllViews()
         val inflater = LayoutInflater.from(activity)
         for ((i, d) in docs.withIndex()) {
-            val tab = inflater.inflate(R.layout.file_tab, fileTabs, false) as TextView
-            tab.text = if (d.dirty) "${d.name}*" else d.name
+            val tab = inflater.inflate(R.layout.file_tab, fileTabs, false)
+            val name = tab.findViewById<TextView>(R.id.tabName)
+            name.text = d.name
+            name.setTextColor(activity.getColor(if (i == active) R.color.accent else R.color.label))
+            tab.findViewById<View>(R.id.tabUnsaved).visibility = if (d.dirty) View.VISIBLE else View.GONE
+            tab.contentDescription = if (d.dirty) "${d.name}, ${activity.getString(R.string.unsaved)}" else d.name
             tab.isSelected = i == active
-            tab.setTextColor(activity.getColor(if (i == active) R.color.accent else R.color.label))
             tab.setOnClickListener { if (i != active) activate(i) }
             tab.setOnLongClickListener { showTabMenu(it, i); true }
+            tab.findViewById<View>(R.id.tabClose).setOnClickListener { requestClose(i) }
             fileTabs.addView(tab)
+        }
+        // Keep the active tab in view when there are more tabs than fit.
+        fileTabs.getChildAt(active)?.let { tab ->
+            tab.post { tab.requestRectangleOnScreen(Rect(0, 0, tab.width, tab.height), false) }
         }
     }
 
@@ -195,16 +208,61 @@ class EditorController(
         if (!isScratch) menu.menu.add(0, 2, 1, R.string.rename)
         menu.menu.add(0, 3, 2, R.string.close)
         if (!isScratch) menu.menu.add(0, 4, 3, R.string.delete)
+        menu.menu.add(0, 5, 4, red(activity.getString(R.string.clear_content)))
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> { if (index == active) captureActive(); save(d, announce = true) }
                 2 -> renameDialog(index)
-                3 -> close(index)
+                3 -> requestClose(index)
                 4 -> deleteDialog(index)
+                5 -> clearDialog(index)
             }
             true
         }
         menu.show()
+    }
+
+    private fun red(text: String) = SpannableString(text).apply {
+        setSpan(ForegroundColorSpan(activity.getColor(R.color.danger)), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
+    /** Empties a file after asking. It is an ordinary edit: Undo brings the text back. */
+    private fun clearDialog(index: Int) {
+        val d = docs[index]
+        val dialog = MaterialAlertDialogBuilder(activity)
+            .setTitle(activity.getString(R.string.clear_question, d.name))
+            .setMessage(R.string.clear_message)
+            .setPositiveButton(R.string.clear) { _, _ ->
+                val i = docs.indexOf(d)
+                if (i < 0) return@setPositiveButton
+                if (i != active) activate(i)
+                editor.text.replace(0, editor.text.length, "")
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+        dialog.getButton(DialogInterface.BUTTON_POSITIVE).setTextColor(activity.getColor(R.color.danger))
+    }
+
+    /** Closes a tab; asks first when it has unsaved changes. */
+    private fun requestClose(index: Int) {
+        if (index == active) captureActive()
+        val d = docs[index]
+        if (!d.dirty) {
+            close(index)
+            return
+        }
+        MaterialAlertDialogBuilder(activity)
+            .setTitle(activity.getString(R.string.unsaved_question, d.name))
+            .setPositiveButton(R.string.save) { _, _ ->
+                save(d, announce = false)
+                docs.indexOf(d).takeIf { it >= 0 }?.let { close(it) }
+            }
+            .setNeutralButton(R.string.discard) { _, _ ->
+                d.dirty = false
+                docs.indexOf(d).takeIf { it >= 0 }?.let { close(it) }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun close(index: Int) {
@@ -445,7 +503,7 @@ class EditorController(
             .setNegativeButton(R.string.replace, null)
             .setNeutralButton(R.string.replace_all, null)
             .show()
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { findNext(find.text.toString()) }
+        dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener { findNext(find.text.toString()) }
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
             replaceCurrent(find.text.toString(), replace.text.toString())
         }

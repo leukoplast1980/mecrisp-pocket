@@ -1,5 +1,6 @@
 /*
- * Mecrisp Pocket - colours Forth source in the editor from ForthLexer tokens.
+ * Mecrisp Pocket - colours Forth source (editor, REPL input and echo) from
+ * ForthLexer tokens, and Forth's messages in the console.
  * Copyright (C) 2026 The Mecrisp Pocket authors. GPL-3.0-or-later.
  */
 package io.github.leukoplast1980.mecrisppocket.ui
@@ -11,6 +12,8 @@ import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import io.github.leukoplast1980.mecrisppocket.R
 import io.github.leukoplast1980.mecrisppocket.forth.LexResult
+import io.github.leukoplast1980.mecrisppocket.forth.MessageKind
+import io.github.leukoplast1980.mecrisppocket.forth.MessageRange
 import io.github.leukoplast1980.mecrisppocket.forth.TokenKind
 
 /** Our colour spans, so we only ever remove our own. */
@@ -34,12 +37,45 @@ class ForthHighlighter(context: Context) {
     )
     private val errorColor = context.getColor(R.color.error_line)
 
-    fun apply(text: Editable, result: LexResult) {
+    private val messageColors = mapOf(
+        MessageKind.OK to context.getColor(R.color.accent),
+        MessageKind.ERROR to context.getColor(R.color.syntax_unknown),
+        MessageKind.WARNING to context.getColor(R.color.changed),
+    )
+
+    /**
+     * Colours all of [text]. An unknown word ending at [typingAt] is left
+     * alone: it is probably still being typed.
+     */
+    fun apply(text: Editable, result: LexResult, typingAt: Int = -1) {
         for (span in text.getSpans(0, text.length, ForthSpan::class.java)) text.removeSpan(span)
         val len = text.length
         for (t in result.tokens) {
+            if (t.kind == TokenKind.UNKNOWN && t.end == typingAt) continue
             val color = colors[t.kind] ?: continue
             if (t.end <= len) text.setSpan(ForthSpan(color), t.start, t.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    /** Colours tokens lexed from a piece of [text] that starts at [offset]. */
+    fun applyAt(text: Editable, offset: Int, result: LexResult) {
+        val len = text.length
+        for (t in result.tokens) {
+            val color = colors[t.kind] ?: continue
+            if (offset + t.end <= len) {
+                text.setSpan(ForthSpan(color), offset + t.start, offset + t.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+    }
+
+    /** Colours Forth's " ok.", errors and warnings in a console line starting at [offset]. */
+    fun applyMessages(text: Editable, offset: Int, ranges: List<MessageRange>) {
+        val len = text.length
+        for (r in ranges) {
+            if (offset + r.end <= len) {
+                text.setSpan(ForthSpan(messageColors.getValue(r.kind)), offset + r.start, offset + r.end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
     }
 

@@ -11,6 +11,7 @@ import io.github.leukoplast1980.mecrisppocket.forth.LineResult
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * App-wide host of the Forth VM. It survives activity recreation; the
@@ -175,13 +176,21 @@ class VmHost private constructor(context: Context) {
 
     fun read(buffer: ByteArray): Int = NativeVm.uartRead(handle, buffer)
 
+    /**
+     * Lines sent to Forth, oldest first, so the console can recognise their
+     * echo and colour it. Filled from any thread; the console drains it.
+     */
+    val sentLines = ConcurrentLinkedQueue<String>()
+
     /** Sends one source line and waits for Forth's answer. Blocks: not on the UI thread. */
-    fun sendLineChecked(line: String, timeoutMs: Int): LineResult =
-        when (NativeVm.sendLine(handle, line.toByteArray(Charsets.UTF_8), timeoutMs)) {
+    fun sendLineChecked(line: String, timeoutMs: Int): LineResult {
+        sentLines.add(line)
+        return when (NativeVm.sendLine(handle, line.toByteArray(Charsets.UTF_8), timeoutMs)) {
             0 -> LineResult.OK
             1 -> LineResult.ERROR
             else -> LineResult.TIMEOUT
         }
+    }
 
     companion object {
         private const val TAG = "VmHost"
