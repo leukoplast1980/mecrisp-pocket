@@ -81,6 +81,15 @@ class ConsoleController(
 
     init {
         output.setText("", TextView.BufferType.EDITABLE)
+        output.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val ins = s?.subSequence(start, start + count)?.toString() ?: ""
+                android.util.Log.i("UiProbe", "change at $start -$before +[" + ins.replace("\n", "\\n") + "]")
+                if (ins == "\n") android.util.Log.i("UiProbe", "newline from", Throwable())
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
 
         // New output (after layout, when its height is known) and a smaller
         // console (keyboard opening) keep the end in view while following.
