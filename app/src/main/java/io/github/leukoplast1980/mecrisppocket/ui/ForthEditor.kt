@@ -18,6 +18,7 @@ import android.text.TextWatcher
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
 import com.amrdeveloper.codeview.CodeView
 import io.github.leukoplast1980.mecrisppocket.R
@@ -67,6 +68,9 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
     private var anchorOffset = 0
     private var anchorNewlines = 0
 
+    /** Gliding after a fling. Null while CodeView's constructor runs (it calls back into us). */
+    private var fling: EditorFling? = null
+
     init {
         typeface = Typeface.MONOSPACE
         // No keyboard suggestions or autocorrect: they mangle Forth words.
@@ -89,10 +93,29 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
             }
             override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
                 newlines += countNewlines(s, start, start + count)
+                fling?.stop()   // typing or a new file: the cursor decides where to look
             }
             override fun afterTextChanged(s: Editable) {}
         })
         updateGutter(digitsFor(newlines + 1))
+        fling = EditorFling(this) { !wrap }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val f = fling ?: return super.onTouchEvent(event)
+        if (f.onTouch(event)) return true
+        val handled = super.onTouchEvent(event)
+        f.afterTouch(event)
+        return handled
+    }
+
+    override fun computeScroll() {
+        if (fling?.computeScroll() != true) super.computeScroll()
+    }
+
+    override fun draw(canvas: Canvas) {
+        super.draw(canvas)
+        fling?.drawEdges(canvas)
     }
 
     private fun countNewlines(s: CharSequence, from: Int, to: Int): Int {
@@ -200,6 +223,7 @@ class ForthEditor(context: Context, attrs: AttributeSet?) : CodeView(context, at
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
+        fling?.stop()
         invalidate()  // the current line highlight and number move along
         onCursorMoved?.invoke()
     }
