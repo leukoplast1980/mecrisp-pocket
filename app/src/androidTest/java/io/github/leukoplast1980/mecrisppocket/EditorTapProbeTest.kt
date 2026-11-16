@@ -3,6 +3,7 @@ package io.github.leukoplast1980.mecrisppocket
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.widget.EditText
 import androidx.test.core.app.ActivityScenario
@@ -21,10 +22,16 @@ class EditorTapProbeTest {
 
     private val instr = InstrumentationRegistry.getInstrumentation()
 
+    private fun touch(t0: Long, t: Long, action: Int, x: Float, y: Float) {
+        val e = MotionEvent.obtain(t0, t, action, x, y, 0)
+        e.source = InputDevice.SOURCE_TOUCHSCREEN
+        instr.sendPointerSync(e)
+    }
+
     private fun tap(x: Float, y: Float) {
         val t0 = SystemClock.uptimeMillis()
-        instr.sendPointerSync(MotionEvent.obtain(t0, t0, MotionEvent.ACTION_DOWN, x, y, 0))
-        instr.sendPointerSync(MotionEvent.obtain(t0, t0 + 60, MotionEvent.ACTION_UP, x, y, 0))
+        touch(t0, t0, MotionEvent.ACTION_DOWN, x, y)
+        touch(t0, t0 + 60, MotionEvent.ACTION_UP, x, y)
     }
 
     private fun shot(name: String) {
@@ -81,7 +88,9 @@ class EditorTapProbeTest {
         shot("tap-editor-2nd.png")
         scenario.onActivity { info = "focused=${editor.isFocused} sel=${editor.selectionStart}..${editor.selectionEnd}" }
         Log.i("UiProbe", "editor after 2nd tap: $info")
-        Thread.sleep(5000)
+        Thread.sleep(2000)
+        shot("tap-editor-2s.png")
+        Thread.sleep(3000)
         shot("tap-editor-5s.png")
         scenario.onActivity { info = "sel=${editor.selectionStart}..${editor.selectionEnd}" }
         Log.i("UiProbe", "editor 5 s later: $info")
