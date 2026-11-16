@@ -146,5 +146,9 @@ expect "fast toggling is busy" "^change: 0001 0001 0001 0000$" -e ": blink 0 pin
 expect "level before a busy tick" "^change: 0000 0001 0001 0000$" -e ": blink2 0 pin-toggle 0 pin-toggle ; 0 pin-out blink2" --gpio
 expect "reset makes pins inputs" "^gpio: dir 0000 out 0000 " -e "0 pin-out 0 pin-high" --reset --gpio
 
+# The example that comes with the app loads and runs.
+EXAMPLES=$(cd "$(dirname "$0")/../../app/src/main/assets/examples" && pwd)
+expect "example lightshow.fs" "^Sweep 1 mode 0 $ && Show over\. ok\." -f "$EXAMPLES/lightshow.fs" -s lightshow --sleep 2000 -s "" --sleep 300
+
 echo "forth tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

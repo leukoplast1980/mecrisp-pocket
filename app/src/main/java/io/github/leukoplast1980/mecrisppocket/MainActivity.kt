@@ -207,7 +207,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (session.rawMode) console.setRawMode(true)
         screen = runCatching { Screen.valueOf(session.screen) }.getOrDefault(Screen.REPL)
-        editor.restore(session.files, session.activeFile)
+        editor.restore(session.files, session.activeFile, sessionStore.firstStart)
         console.scrollToEnd()
         if (vm.coreUpdateAvailable && savedInstanceState == null) askToSwitchCore()
 

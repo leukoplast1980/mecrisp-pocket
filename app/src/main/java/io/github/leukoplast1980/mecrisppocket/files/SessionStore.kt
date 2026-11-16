@@ -25,6 +25,9 @@ class SessionStore(context: Context) {
     private val sessionFile = File(context.filesDir, "session.json")
     private val consoleFile = File(context.filesDir, "console.txt")
 
+    /** True until the first session is saved: the app has never been closed yet. */
+    val firstStart: Boolean get() = !sessionFile.exists()
+
     fun load(): Session = try {
         val o = JSONObject(sessionFile.readText())
         val arr = o.optJSONArray("files") ?: JSONArray()

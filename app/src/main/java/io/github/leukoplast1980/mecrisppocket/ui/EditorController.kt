@@ -28,6 +28,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.github.leukoplast1980.mecrisppocket.R
+import io.github.leukoplast1980.mecrisppocket.files.Examples
 import io.github.leukoplast1980.mecrisppocket.files.ProjectFolder
 import io.github.leukoplast1980.mecrisppocket.files.SessionStore
 import io.github.leukoplast1980.mecrisppocket.forth.Dictionary
@@ -102,7 +103,16 @@ class EditorController(
     // ------------------------------------------------------------------
     // Session
 
-    fun restore(files: List<SessionStore.OpenFile>, activeIndex: Int) {
+    /**
+     * Opens the files of the last session. On the very first start there is
+     * none: then the scratch file and the light show example open, with the
+     * example in front.
+     */
+    fun restore(files: List<SessionStore.OpenFile>, activeIndex: Int, firstStart: Boolean) {
+        if (firstStart && files.isEmpty()) {
+            openFirstStart()
+            return
+        }
         Thread {
             val loaded = files.mapNotNull { f ->
                 try {
@@ -133,6 +143,34 @@ class EditorController(
         val f = folder.scratchFile
         if (!f.exists()) f.writeText(activity.getString(R.string.scratch_text))
         openUri(Uri.fromFile(f))
+    }
+
+    private fun openFirstStart() {
+        Thread {
+            val f = folder.scratchFile
+            val uris = ArrayList<Uri>()
+            runCatching {
+                if (!f.exists()) f.writeText(activity.getString(R.string.scratch_text))
+                uris.add(Uri.fromFile(f))
+            }
+            runCatching { uris.add(Uri.fromFile(Examples.copy(activity, Examples.FIRST))) }
+            val loaded = uris.mapNotNull { uri ->
+                runCatching { Doc(uri, folder.nameOf(uri), folder.read(uri)) }.getOrNull()
+            }
+            activity.runOnUiThread {
+                docs.addAll(loaded)
+                if (docs.isEmpty()) openScratch() else activate(docs.size - 1)
+            }
+        }.start()
+    }
+
+    private fun openExample(name: String) {
+        Thread {
+            val uri = runCatching { Uri.fromFile(Examples.copy(activity, name)) }.getOrNull()
+            activity.runOnUiThread {
+                if (uri != null) openUri(uri) else toast(activity.getString(R.string.cannot_open, name))
+            }
+        }.start()
     }
 
     fun openUri(uri: Uri) {
@@ -324,6 +362,9 @@ class EditorController(
         val labels = ArrayList<String>()
         val actions = ArrayList<() -> Unit>()
         labels.add(activity.getString(R.string.scratch_file)); actions.add { openScratch() }
+        for (name in Examples.list(activity)) {
+            labels.add(activity.getString(R.string.example_file, name)); actions.add { openExample(name) }
+        }
         for ((name, uri) in files) { labels.add(name); actions.add { openUri(uri) } }
         if (folderName != null) { labels.add(activity.getString(R.string.new_file)); actions.add { newFileDialog() } }
         labels.add(activity.getString(if (folderName == null) R.string.choose_folder else R.string.change_folder))

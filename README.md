@@ -27,6 +27,12 @@ In the console:
   compiled for the old core and switching removes them (later: ⋮ → Switch to
   the new core)
 
+The first start opens `lightshow.fs`, an example that drives every part of
+the board: a scanner and a counter on the pins, a PWM "breathing" pin, tones,
+the screen brightness, and pin 15 as a button you tap in the GPIO view. Send
+it with Send → Whole file, then type `lightshow`. Examples stay available
+under Files; the editor works on the app's own copy, so your changes are kept.
+
 In the editor:
 
 - **Files** opens the scratch file or a file from your project folder (pick
