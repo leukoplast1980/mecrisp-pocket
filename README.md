@@ -22,6 +22,10 @@ In the console:
 - **Reset** restarts the board; words compiled with `compiletoflash` stay
 - a long press on **Reset** restarts without running `init` (safe boot)
 - `eraseflash` removes all flash words
+- an app update can bring a new Forth core. Without flash words the app
+  switches to it by itself; with flash words it asks first, because they were
+  compiled for the old core and switching removes them (later: ⋮ → Switch to
+  the new core)
 
 In the editor:
 

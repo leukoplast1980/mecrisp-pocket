@@ -9,7 +9,12 @@
     <string name="raw_hint">Raw mode: keys go straight to Forth</string>
     <string name="safe_boot">Safe boot: init is skipped</string>
     <string name="input_full">Forth is not reading input</string>
-    <string name="core_update_notice">[A new Quintus core came with this app version. Your saved flash words still run on the old core. Run eraseflash to switch.]\n</string>
+    <string name="core_update_notice">[Still on the old Forth core. To switch: ⋮ → Switch to the new core.]\n</string>
+    <string name="switch_core_menu">Switch to the new core</string>
+    <string name="switch_core_title">New Forth core</string>
+    <string name="switch_core_message">This app version comes with a new Forth core, with new words such as vibrate, tone and pin-out.\n\nThe words you compiled to flash were built for the old core. Switching removes them; send their source again afterwards.\n\nUntil you switch, the old core keeps running and the new words are missing.</string>
+    <string name="switch_core_now">Switch now</string>
+    <string name="switch_core_later">Later</string>
     <string name="tab_repl">REPL</string>
     <string name="tab_editor">Editor</string>
     <string name="tab_registers">Registers</string>

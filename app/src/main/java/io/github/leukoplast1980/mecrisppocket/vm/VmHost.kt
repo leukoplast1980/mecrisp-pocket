@@ -19,8 +19,10 @@ import java.util.concurrent.ConcurrentLinkedQueue
  *
  * Flash persistence: the saved image (flash.img) is kept together with the
  * hash of the shipped image it started from (flash.core). If an app update
- * ships a different core, the saved image keeps running (its words call
- * into the old core) and [coreUpdateAvailable] is set.
+ * ships a different core and the saved image has no words in flash, the new
+ * core is used at once. Otherwise the saved image keeps running (its words
+ * call into the old core) and [coreUpdateAvailable] is set until the user
+ * switches with [switchToShippedCore].
  */
 class VmHost private constructor(context: Context) {
 
@@ -68,11 +70,14 @@ class VmHost private constructor(context: Context) {
         )
 
         val saved = readSaved()
-        if (saved != null) {
+        val savedCore = runCatching { coreFile.readText().trim() }.getOrNull()
+        val oldCore = savedCore != null && savedCore != shippedCoreHash
+        if (saved != null && !(oldCore && FlashImage.userAreaEmpty(saved))) {
             NativeVm.loadFlash(handle, saved)
-            val savedCore = runCatching { coreFile.readText().trim() }.getOrNull()
-            coreUpdateAvailable = savedCore != null && savedCore != shippedCoreHash
+            coreUpdateAvailable = oldCore
         } else {
+            // First start, or a new core and nothing in flash to lose.
+            if (saved != null) flashFile.delete()
             NativeVm.loadFlash(handle, shippedImage)
             writeCoreHash(shippedCoreHash)
         }

@@ -26,6 +26,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
 import io.github.leukoplast1980.mecrisppocket.files.ProjectFolder
 import io.github.leukoplast1980.mecrisppocket.files.SessionStore
@@ -207,8 +208,8 @@ class MainActivity : AppCompatActivity() {
         if (session.rawMode) console.setRawMode(true)
         screen = runCatching { Screen.valueOf(session.screen) }.getOrDefault(Screen.REPL)
         editor.restore(session.files, session.activeFile)
-        if (vm.coreUpdateAvailable) console.appendText(getString(R.string.core_update_notice))
         console.scrollToEnd()
+        if (vm.coreUpdateAvailable && savedInstanceState == null) askToSwitchCore()
 
         applyLayout()
     }
@@ -303,12 +304,14 @@ class MainActivity : AppCompatActivity() {
         val menu = PopupMenu(this, anchor)
         menu.menuInflater.inflate(R.menu.console, menu.menu)
         menu.menu.findItem(R.id.raw_mode).isChecked = console.rawMode
+        menu.menu.findItem(R.id.switch_core).isVisible = vm.coreUpdateAvailable
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.raw_mode -> console.setRawMode(!console.rawMode)
                 R.id.copy_all -> console.copyAll()
                 R.id.clear_screen -> console.clear()
                 R.id.project_folder -> pickFolder.launch(folder.treeUri)
+                R.id.switch_core -> askToSwitchCore()
                 R.id.settings -> startActivity(Intent(this, SettingsActivity::class.java))
             }
             true
@@ -354,6 +357,25 @@ class MainActivity : AppCompatActivity() {
         handler.post(registerRefresh)
         handler.post(gpioRefresh)
         handler.postDelayed(autosave, AUTOSAVE_MS)
+    }
+
+    /**
+     * An app update brought a new Forth core, but words compiled to flash
+     * still use the old one. Switching erases them, so ask.
+     */
+    private fun askToSwitchCore() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.switch_core_title)
+            .setMessage(R.string.switch_core_message)
+            .setPositiveButton(R.string.switch_core_now) { _, _ ->
+                vm.switchToShippedCore()
+                console.markDictionaryStale()
+            }
+            .setNegativeButton(R.string.switch_core_later) { _, _ ->
+                console.appendText(getString(R.string.core_update_notice))
+                console.scrollToEnd()
+            }
+            .show()
     }
 
     /** Settings may have changed on the Settings screen. */
