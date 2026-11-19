@@ -4,10 +4,12 @@ A Forth programming environment for Android that runs the real
 [Mecrisp-Quintus](https://mecrisp.sourceforge.net/) Forth on an emulated
 RISC-V microcontroller board.
 
-<img width="864" height="1939" alt="Screenshot_20261119-081746" src="https://github.com/user-attachments/assets/bc7b487b-6fad-49f0-8504-71662c1ad864" />
-<img width="864" height="1939" alt="Screenshot_20261119-081804" src="https://github.com/user-attachments/assets/8bd6511b-5cab-4c8f-b89e-06896c7bf51b" />
-<img width="864" height="1939" alt="Screenshot_20261119-081842" src="https://github.com/user-attachments/assets/4a0c7789-ba22-4a15-9500-610ea81f3f06" />
-<img width="864" height="1939" alt="Screenshot_20261119-081847" src="https://github.com/user-attachments/assets/1c872141-d9ea-4230-bd29-5f3f9fa659cb" />
+<p>
+<a href="https://github.com/user-attachments/assets/bc7b487b-6fad-49f0-8504-71662c1ad864"><img src="https://github.com/user-attachments/assets/bc7b487b-6fad-49f0-8504-71662c1ad864" width="180" alt="Mecrisp Pocket screenshot 1"></a>
+<a href="https://github.com/user-attachments/assets/8bd6511b-5cab-4c8f-b89e-06896c7bf51b"><img src="https://github.com/user-attachments/assets/8bd6511b-5cab-4c8f-b89e-06896c7bf51b" width="180" alt="Mecrisp Pocket screenshot 2"></a>
+<a href="https://github.com/user-attachments/assets/4a0c7789-ba22-4a15-9500-610ea81f3f06"><img src="https://github.com/user-attachments/assets/4a0c7789-ba22-4a15-9500-610ea81f3f06" width="180" alt="Mecrisp Pocket screenshot 3"></a>
+<a href="https://github.com/user-attachments/assets/1c872141-d9ea-4230-bd29-5f3f9fa659cb"><img src="https://github.com/user-attachments/assets/1c872141-d9ea-4230-bd29-5f3f9fa659cb" width="180" alt="Mecrisp Pocket screenshot 4"></a>
+</p>
 
 **Status:** milestone 4 — the emulator, the Quintus port, a REPL and an editor
 with completion and syntax colouring, Registers and GPIO views, files and
